@@ -11,5 +11,6 @@ If required behavior is absent, ambiguous, or contradictory, report a `SPECIFICA
 - [`00-introduction.md`](00-introduction.md) — Project principles and foundational terminology.
 - [`01-program-model.md`](01-program-model.md) — Normative Program Model 0.1 specification covering Program, Module, identity, revisions, controlled mutation, structural validity, and presentation metadata.
 - [`02-type-system-foundations.md`](02-type-system-foundations.md) — Normative Type System Foundations 0.1 specification defining the initial intrinsic type set and its foundational semantics.
+- [`03-functions-and-parameters.md`](03-functions-and-parameters.md) — Normative Functions and Parameters 0.1 specification defining signature entities, identity, ownership, ordering, and controlled mutation.
 
 Later specification increments will define additional MNIR semantics.
