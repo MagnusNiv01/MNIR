@@ -1,0 +1,18 @@
+[workspace]
+members = [
+    "crates/easyh-render",
+    "crates/mnir-cli",
+    "crates/mnir-core",
+    "crates/mnir-verify",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+easyh-render = { path = "crates/easyh-render" }
+mnir-core = { path = "crates/mnir-core" }
+mnir-verify = { path = "crates/mnir-verify" }

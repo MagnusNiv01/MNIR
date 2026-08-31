@@ -1,0 +1,10 @@
+[package]
+name = "mnir-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+easyh-render.workspace = true
+mnir-core.workspace = true
+mnir-verify.workspace = true
