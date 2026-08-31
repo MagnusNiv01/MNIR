@@ -1,10 +1,19 @@
 #![forbid(unsafe_code)]
 
-//! Ownership boundary for the future canonical MNIR data model.
+//! Canonical data model for MNIR Program Model 0.1.
 //!
-//! This crate will eventually contain semantic program structures, stable
-//! identifiers, types, expressions, functions, metadata, and related core
-//! concepts. None of those semantics are implemented yet.
+//! This crate implements only the Program, Module, identity, revision,
+//! presentation metadata, snapshot, fork, and controlled mutation concepts
+//! defined by `docs/specification/01-program-model.md`.
 //!
-//! This crate must not depend on EasyH or on `mnir-verify`, and it should
-//! remain independent of concrete execution backends.
+//! It intentionally contains no semantic verifier, EasyH support, generic
+//! node abstraction, language entities, serialization, or execution model.
+
+mod ids;
+mod model;
+
+pub use ids::{IdentifierCategory, ModuleId, ProgramId, RevisionId};
+pub use model::{
+    MnirProgram, Module, MutationError, MutationTransaction, PresentationMetadata, ProgramSnapshot,
+    StructuralError, TransactionState,
+};

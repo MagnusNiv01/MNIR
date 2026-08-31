@@ -4,7 +4,7 @@ MNIR stands for **Magnus Nivinger Intermediate Representation**. The project is 
 
 MNIR is intended to become a canonical semantic representation of programs. Future tools and human-oriented languages may project from or compile to that representation. EasyH is planned as a human-readable presentation/frontend language, not as the canonical representation.
 
-No MNIR language semantics or usable tooling have been implemented. Development proceeds from the normative specification, and implementation must not silently fill in unspecified behavior.
+Program Model 0.1 is implemented as the current foundation for Program and Module identity, revisions, snapshots, forks, presentation metadata, and controlled mutation. No programming-language entities, semantic verifier, EasyH support, or usable end-user tooling have been implemented. Development proceeds from the normative specification, and implementation must not silently fill in unspecified behavior.
 
 ## Development model
 
@@ -30,7 +30,7 @@ The specification is authoritative. Normative requirements use **MUST**, **MUST 
 
 ```text
 crates/
-  mnir-core/    Future canonical MNIR data model
+  mnir-core/    Program Model 0.1 and future canonical MNIR data model
   mnir-verify/  Future semantic verification layer
   easyh-render/ Future deterministic EasyH renderer
   mnir-cli/     Future command-line development tools
