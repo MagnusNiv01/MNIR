@@ -16,11 +16,13 @@
 
 mod ids;
 mod intrinsic;
-mod model;
+mod presentation;
+mod program;
 
 pub use ids::{FunctionId, IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId};
 pub use intrinsic::IntrinsicType;
-pub use model::{
-    Function, MnirProgram, Module, MutationError, MutationTransaction, Parameter,
-    PresentationMetadata, ProgramSnapshot, StructuralError, TransactionState,
+pub use presentation::PresentationMetadata;
+pub use program::{
+    Function, MnirProgram, Module, MutationError, MutationTransaction, Parameter, ProgramSnapshot,
+    StructuralError, TransactionState,
 };
