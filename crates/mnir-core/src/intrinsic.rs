@@ -14,7 +14,7 @@
 ///
 /// let _ = IntrinsicType::Unknown;
 /// ```
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum IntrinsicType {
     /// The target-independent signed 32-bit intrinsic type.
     Int32,
