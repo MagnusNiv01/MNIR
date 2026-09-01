@@ -25,3 +25,14 @@ pub enum IntrinsicType {
     /// The single-valued Unit intrinsic type.
     Unit,
 }
+
+impl IntrinsicType {
+    pub(crate) fn copied(&self) -> Self {
+        match self {
+            Self::Int32 => Self::Int32,
+            Self::Int64 => Self::Int64,
+            Self::Bool => Self::Bool,
+            Self::Unit => Self::Unit,
+        }
+    }
+}

@@ -1,7 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::ids::{FunctionId, IdentifierCategory, ModuleId, ParameterId, RevisionId};
+use crate::ids::{
+    BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, RevisionId,
+};
 
 /// Structural failures defined by `MNIR-CORE-040` and `MNIR-CORE-041`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +21,24 @@ pub enum StructuralError {
     DuplicateFunctionIdentity(FunctionId),
     ParameterIdentityNotCommitted(ParameterId),
     DuplicateParameterIdentity(ParameterId),
+    BlockIdentityNotCommitted(BlockId),
+    DuplicateBlockIdentity(BlockId),
+    ExpressionIdentityMismatch {
+        collection_id: ExpressionId,
+        expression_id: ExpressionId,
+    },
+    ExpressionIdentityNotCommitted(ExpressionId),
+    DuplicateExpressionIdentity(ExpressionId),
+    UnterminatedBlock(BlockId),
+    ReturnExpressionNotInBlock {
+        block_id: BlockId,
+        expression_id: ExpressionId,
+    },
+    DanglingParameterReference {
+        expression_id: ExpressionId,
+        parameter_id: ParameterId,
+        function_id: FunctionId,
+    },
 }
 
 impl fmt::Display for StructuralError {
@@ -62,6 +82,50 @@ impl fmt::Display for StructuralError {
             Self::DuplicateParameterIdentity(id) => {
                 write!(formatter, "parameter identity {id:?} occurs more than once")
             }
+            Self::BlockIdentityNotCommitted(id) => {
+                write!(
+                    formatter,
+                    "block identity {id:?} is not in committed history"
+                )
+            }
+            Self::DuplicateBlockIdentity(id) => {
+                write!(formatter, "block identity {id:?} occurs more than once")
+            }
+            Self::ExpressionIdentityMismatch {
+                collection_id,
+                expression_id,
+            } => write!(
+                formatter,
+                "expression collection identity {collection_id:?} does not match contained identity {expression_id:?}"
+            ),
+            Self::ExpressionIdentityNotCommitted(id) => write!(
+                formatter,
+                "expression identity {id:?} is not in committed history"
+            ),
+            Self::DuplicateExpressionIdentity(id) => {
+                write!(
+                    formatter,
+                    "expression identity {id:?} occurs more than once"
+                )
+            }
+            Self::UnterminatedBlock(id) => {
+                write!(formatter, "block {id:?} has no Return terminator")
+            }
+            Self::ReturnExpressionNotInBlock {
+                block_id,
+                expression_id,
+            } => write!(
+                formatter,
+                "Return expression {expression_id:?} is not owned by block {block_id:?}"
+            ),
+            Self::DanglingParameterReference {
+                expression_id,
+                parameter_id,
+                function_id,
+            } => write!(
+                formatter,
+                "expression {expression_id:?} refers to parameter {parameter_id:?} not owned by function {function_id:?}"
+            ),
         }
     }
 }
@@ -85,6 +149,18 @@ pub enum MutationError {
     UnknownModule(ModuleId),
     UnknownFunction(FunctionId),
     UnknownParameter(ParameterId),
+    UnknownBlock(BlockId),
+    UnknownExpression(ExpressionId),
+    FunctionBodyAlreadyExists(FunctionId),
+    FunctionBodyAbsent(FunctionId),
+    ParameterNotOwnedByFunction {
+        parameter_id: ParameterId,
+        function_id: FunctionId,
+    },
+    ExpressionNotOwnedByBlock {
+        expression_id: ExpressionId,
+        block_id: BlockId,
+    },
     SourceRevisionChanged {
         expected: RevisionId,
         actual: RevisionId,
@@ -104,6 +180,28 @@ impl fmt::Display for MutationError {
             Self::UnknownModule(id) => write!(formatter, "unknown module: {id:?}"),
             Self::UnknownFunction(id) => write!(formatter, "unknown function: {id:?}"),
             Self::UnknownParameter(id) => write!(formatter, "unknown parameter: {id:?}"),
+            Self::UnknownBlock(id) => write!(formatter, "unknown block: {id:?}"),
+            Self::UnknownExpression(id) => write!(formatter, "unknown expression: {id:?}"),
+            Self::FunctionBodyAlreadyExists(id) => {
+                write!(formatter, "function already has a body: {id:?}")
+            }
+            Self::FunctionBodyAbsent(id) => {
+                write!(formatter, "function has no body: {id:?}")
+            }
+            Self::ParameterNotOwnedByFunction {
+                parameter_id,
+                function_id,
+            } => write!(
+                formatter,
+                "parameter {parameter_id:?} is not owned by function {function_id:?}"
+            ),
+            Self::ExpressionNotOwnedByBlock {
+                expression_id,
+                block_id,
+            } => write!(
+                formatter,
+                "expression {expression_id:?} is not owned by block {block_id:?}"
+            ),
             Self::SourceRevisionChanged { expected, actual } => write!(
                 formatter,
                 "transaction source revision changed from {expected:?} to {actual:?}"
@@ -112,6 +210,34 @@ impl fmt::Display for MutationError {
         }
     }
 }
+
+/// A read-only failure to derive an Expression's intrinsic type.
+///
+/// Unlike [`MutationError`], this error never poisons a transaction
+/// (`MNIR-EXPR-090`, `MNIR-EXPR-091`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExpressionTypeError {
+    UnresolvedParameter {
+        expression_id: ExpressionId,
+        parameter_id: ParameterId,
+    },
+}
+
+impl fmt::Display for ExpressionTypeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnresolvedParameter {
+                expression_id,
+                parameter_id,
+            } => write!(
+                formatter,
+                "cannot derive type of expression {expression_id:?}: parameter {parameter_id:?} does not resolve"
+            ),
+        }
+    }
+}
+
+impl Error for ExpressionTypeError {}
 
 impl Error for MutationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {

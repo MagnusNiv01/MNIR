@@ -8,6 +8,8 @@ pub enum IdentifierCategory {
     Module,
     Function,
     Parameter,
+    Block,
+    Expression,
 }
 
 /// Opaque identity of one Program lineage.
@@ -66,6 +68,23 @@ pub struct FunctionId(pub(crate) u64);
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct ParameterId(pub(crate) u64);
 
+/// Opaque identity of one Block within a Program lineage.
+///
+/// ```compile_fail
+/// use mnir_core::{BlockId, ExpressionId};
+///
+/// fn require_expression(_: ExpressionId) {}
+/// fn demonstrate(block_id: BlockId) {
+///     require_expression(block_id);
+/// }
+/// ```
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct BlockId(pub(crate) u64);
+
+/// Opaque identity of one Expression within a Program lineage.
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct ExpressionId(pub(crate) u64);
+
 macro_rules! impl_opaque_debug {
     ($type:ident) => {
         impl fmt::Debug for $type {
@@ -84,3 +103,5 @@ impl_opaque_debug!(RevisionId);
 impl_opaque_debug!(ModuleId);
 impl_opaque_debug!(FunctionId);
 impl_opaque_debug!(ParameterId);
+impl_opaque_debug!(BlockId);
+impl_opaque_debug!(ExpressionId);

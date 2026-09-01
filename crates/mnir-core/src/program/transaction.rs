@@ -4,12 +4,16 @@ use std::mem;
 use std::sync::Arc;
 
 use crate::IntrinsicType;
-use crate::ids::{FunctionId, IdentifierCategory, ModuleId, ParameterId, RevisionId};
+use crate::ids::{
+    BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, RevisionId,
+};
 
-use super::error::{MutationError, TransactionState};
+use super::body::{Block, Expression, ExpressionKind, FunctionBody};
+use super::error::{ExpressionTypeError, MutationError, TransactionState};
 use super::model::{
-    Function, MnirProgram, Module, Parameter, ProgramSnapshot, RevisionState, find_function,
-    find_function_mut, find_parameter, find_parameter_mut,
+    Function, MnirProgram, Module, Parameter, ProgramSnapshot, RevisionState,
+    derive_expression_type, find_block, find_block_mut, find_block_owner, find_expression,
+    find_function, find_function_mut, find_parameter, find_parameter_mut,
 };
 use super::validation::validate_modules;
 
@@ -22,9 +26,13 @@ impl MnirProgram {
             provisional_module_ids: HashSet::new(),
             provisional_function_ids: HashSet::new(),
             provisional_parameter_ids: HashSet::new(),
+            provisional_block_ids: HashSet::new(),
+            provisional_expression_ids: HashSet::new(),
             next_module_raw: self.next_module_raw,
             next_function_raw: self.next_function_raw,
             next_parameter_raw: self.next_parameter_raw,
+            next_block_raw: self.next_block_raw,
+            next_expression_raw: self.next_expression_raw,
             lineage: self,
             state: TransactionState::Active,
         }
@@ -39,9 +47,13 @@ pub struct MutationTransaction<'program> {
     provisional_module_ids: HashSet<ModuleId>,
     provisional_function_ids: HashSet<FunctionId>,
     provisional_parameter_ids: HashSet<ParameterId>,
+    provisional_block_ids: HashSet<BlockId>,
+    provisional_expression_ids: HashSet<ExpressionId>,
     next_module_raw: Option<u64>,
     next_function_raw: Option<u64>,
     next_parameter_raw: Option<u64>,
+    next_block_raw: Option<u64>,
+    next_expression_raw: Option<u64>,
     state: TransactionState,
 }
 
@@ -94,6 +106,29 @@ impl MutationTransaction<'_> {
     }
 
     #[must_use]
+    pub fn block(&self, id: BlockId) -> Option<&Block> {
+        find_block(&self.working_modules, id)
+    }
+
+    #[must_use]
+    pub fn expression(&self, id: ExpressionId) -> Option<&Expression> {
+        find_expression(&self.working_modules, id)
+    }
+
+    /// Derives an Expression type from the current working state.
+    ///
+    /// This is intentionally read-only: an unresolved Parameter reference
+    /// reports [`ExpressionTypeError`] without changing transaction state
+    /// (`MNIR-EXPR-090`, `MNIR-EXPR-091`).
+    #[must_use]
+    pub fn expression_type(
+        &self,
+        id: ExpressionId,
+    ) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+        derive_expression_type(&self.working_modules, id)
+    }
+
+    #[must_use]
     pub fn is_module_id_provisional(&self, id: ModuleId) -> bool {
         self.state == TransactionState::Active && self.provisional_module_ids.contains(&id)
     }
@@ -106,6 +141,16 @@ impl MutationTransaction<'_> {
     #[must_use]
     pub fn is_parameter_id_provisional(&self, id: ParameterId) -> bool {
         self.state == TransactionState::Active && self.provisional_parameter_ids.contains(&id)
+    }
+
+    #[must_use]
+    pub fn is_block_id_provisional(&self, id: BlockId) -> bool {
+        self.state == TransactionState::Active && self.provisional_block_ids.contains(&id)
+    }
+
+    #[must_use]
+    pub fn is_expression_id_provisional(&self, id: ExpressionId) -> bool {
+        self.state == TransactionState::Active && self.provisional_expression_ids.contains(&id)
     }
 
     pub fn add_module(&mut self) -> Result<ModuleId, MutationError> {
@@ -319,6 +364,128 @@ impl MutationTransaction<'_> {
         Ok(())
     }
 
+    /// Creates the optional body and its sole, initially unterminated Block
+    /// (`MNIR-EXPR-044`, `MNIR-EXPR-051`).
+    pub fn create_function_body(
+        &mut self,
+        function_id: FunctionId,
+    ) -> Result<BlockId, MutationError> {
+        self.require_active()?;
+
+        let Some(function) = find_function(&self.working_modules, function_id) else {
+            return Err(self.fail(MutationError::UnknownFunction(function_id)));
+        };
+        if function.body.is_some() {
+            return Err(self.fail(MutationError::FunctionBodyAlreadyExists(function_id)));
+        }
+
+        let block_id = match self.allocate_block_id() {
+            Ok(id) => id,
+            Err(error) => return Err(self.fail(error)),
+        };
+        let Some(function) = find_function_mut(&mut self.working_modules, function_id) else {
+            return Err(self.fail(MutationError::UnknownFunction(function_id)));
+        };
+        function.body = Some(FunctionBody::new(block_id));
+        self.provisional_block_ids.insert(block_id);
+        Ok(block_id)
+    }
+
+    pub fn remove_function_body(&mut self, function_id: FunctionId) -> Result<(), MutationError> {
+        self.require_active()?;
+
+        let Some(function) = find_function_mut(&mut self.working_modules, function_id) else {
+            return Err(self.fail(MutationError::UnknownFunction(function_id)));
+        };
+        if function.body.take().is_none() {
+            return Err(self.fail(MutationError::FunctionBodyAbsent(function_id)));
+        }
+        Ok(())
+    }
+
+    pub fn add_int32_literal(
+        &mut self,
+        block_id: BlockId,
+        value: i32,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_expression(block_id, ExpressionKind::Int32Literal(value))
+    }
+
+    pub fn add_int64_literal(
+        &mut self,
+        block_id: BlockId,
+        value: i64,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_expression(block_id, ExpressionKind::Int64Literal(value))
+    }
+
+    pub fn add_bool_literal(
+        &mut self,
+        block_id: BlockId,
+        value: bool,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_expression(block_id, ExpressionKind::BoolLiteral(value))
+    }
+
+    pub fn add_unit_literal(&mut self, block_id: BlockId) -> Result<ExpressionId, MutationError> {
+        self.add_expression(block_id, ExpressionKind::UnitLiteral)
+    }
+
+    pub fn add_parameter_reference(
+        &mut self,
+        block_id: BlockId,
+        parameter_id: ParameterId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.require_active()?;
+
+        let Some(owner) = find_block_owner(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        let owner_id = owner.id;
+        if owner.parameter(parameter_id).is_none() {
+            let error = if find_parameter(&self.working_modules, parameter_id).is_some() {
+                MutationError::ParameterNotOwnedByFunction {
+                    parameter_id,
+                    function_id: owner_id,
+                }
+            } else {
+                MutationError::UnknownParameter(parameter_id)
+            };
+            return Err(self.fail(error));
+        }
+
+        self.add_expression(block_id, ExpressionKind::ParameterReference(parameter_id))
+    }
+
+    pub fn set_return(
+        &mut self,
+        block_id: BlockId,
+        expression_id: ExpressionId,
+    ) -> Result<(), MutationError> {
+        self.require_active()?;
+
+        let Some(block) = find_block(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        if block.expression(expression_id).is_none() {
+            let error = if find_expression(&self.working_modules, expression_id).is_some() {
+                MutationError::ExpressionNotOwnedByBlock {
+                    expression_id,
+                    block_id,
+                }
+            } else {
+                MutationError::UnknownExpression(expression_id)
+            };
+            return Err(self.fail(error));
+        }
+
+        let Some(block) = find_block_mut(&mut self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        block.return_expression_id = Some(expression_id);
+        Ok(())
+    }
+
     pub fn commit(&mut self) -> Result<ProgramSnapshot, MutationError> {
         self.require_active()?;
 
@@ -336,12 +503,18 @@ impl MutationTransaction<'_> {
         committed_function_ids.extend(self.provisional_function_ids.iter().copied());
         let mut committed_parameter_ids = self.lineage.head.committed_parameter_ids.clone();
         committed_parameter_ids.extend(self.provisional_parameter_ids.iter().copied());
+        let mut committed_block_ids = self.lineage.head.committed_block_ids.clone();
+        committed_block_ids.extend(self.provisional_block_ids.iter().copied());
+        let mut committed_expression_ids = self.lineage.head.committed_expression_ids.clone();
+        committed_expression_ids.extend(self.provisional_expression_ids.iter().copied());
 
         if let Err(error) = validate_modules(
             &self.working_modules,
             &committed_module_ids,
             &committed_function_ids,
             &committed_parameter_ids,
+            &committed_block_ids,
+            &committed_expression_ids,
         ) {
             return Err(self.fail(MutationError::StructuralViolation(error)));
         }
@@ -361,10 +534,14 @@ impl MutationTransaction<'_> {
             committed_module_ids,
             committed_function_ids,
             committed_parameter_ids,
+            committed_block_ids,
+            committed_expression_ids,
         });
         self.lineage.next_module_raw = self.next_module_raw;
         self.lineage.next_function_raw = self.next_function_raw;
         self.lineage.next_parameter_raw = self.next_parameter_raw;
+        self.lineage.next_block_raw = self.next_block_raw;
+        self.lineage.next_expression_raw = self.next_expression_raw;
         self.state = TransactionState::Committed;
 
         Ok(self.lineage.snapshot())
@@ -391,6 +568,30 @@ impl MutationTransaction<'_> {
     fn fail(&mut self, error: MutationError) -> MutationError {
         self.state = TransactionState::Failed;
         error
+    }
+
+    fn add_expression(
+        &mut self,
+        block_id: BlockId,
+        kind: ExpressionKind,
+    ) -> Result<ExpressionId, MutationError> {
+        self.require_active()?;
+
+        if find_block(&self.working_modules, block_id).is_none() {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        }
+        let expression_id = match self.allocate_expression_id() {
+            Ok(id) => id,
+            Err(error) => return Err(self.fail(error)),
+        };
+        let Some(block) = find_block_mut(&mut self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        block
+            .expressions
+            .insert(expression_id, Expression::new(expression_id, kind));
+        self.provisional_expression_ids.insert(expression_id);
+        Ok(expression_id)
     }
 
     fn allocate_module_id(&mut self) -> Result<ModuleId, MutationError> {
@@ -436,6 +637,39 @@ impl MutationTransaction<'_> {
                 .committed_parameter_ids
                 .contains(&candidate)
                 && !self.provisional_parameter_ids.contains(&candidate)
+            {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    fn allocate_block_id(&mut self) -> Result<BlockId, MutationError> {
+        loop {
+            let raw = allocate_from_cursor(&mut self.next_block_raw, IdentifierCategory::Block)?;
+            let candidate = BlockId(raw);
+
+            if !self.lineage.head.committed_block_ids.contains(&candidate)
+                && !self.provisional_block_ids.contains(&candidate)
+            {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    fn allocate_expression_id(&mut self) -> Result<ExpressionId, MutationError> {
+        loop {
+            let raw = allocate_from_cursor(
+                &mut self.next_expression_raw,
+                IdentifierCategory::Expression,
+            )?;
+            let candidate = ExpressionId(raw);
+
+            if !self
+                .lineage
+                .head
+                .committed_expression_ids
+                .contains(&candidate)
+                && !self.provisional_expression_ids.contains(&candidate)
             {
                 return Ok(candidate);
             }

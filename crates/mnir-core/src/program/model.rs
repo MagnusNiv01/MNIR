@@ -3,10 +3,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::IntrinsicType;
-use crate::ids::{FunctionId, IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId};
+use crate::ids::{
+    BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, ProgramId,
+    RevisionId,
+};
 use crate::presentation::PresentationMetadata;
 
-use super::error::{MutationError, StructuralError};
+use super::body::{Block, Expression, ExpressionKind, FunctionBody};
+use super::error::{ExpressionTypeError, MutationError, StructuralError};
 use super::validation::validate_revision_state;
 
 static NEXT_PROGRAM_ID: AtomicU64 = AtomicU64::new(1);
@@ -47,7 +51,7 @@ impl Parameter {
     pub(super) fn copied(&self) -> Self {
         Self {
             id: self.id,
-            intrinsic_type: copy_intrinsic_type(&self.intrinsic_type),
+            intrinsic_type: self.intrinsic_type.copied(),
             presentation: self.presentation.copied(),
         }
     }
@@ -59,6 +63,7 @@ pub struct Function {
     pub(super) id: FunctionId,
     pub(super) return_type: IntrinsicType,
     pub(super) parameters: Vec<Parameter>,
+    pub(super) body: Option<FunctionBody>,
     pub(super) presentation: PresentationMetadata,
 }
 
@@ -68,6 +73,7 @@ impl Function {
             id,
             return_type,
             parameters: Vec::new(),
+            body: None,
             presentation: PresentationMetadata::default(),
         }
     }
@@ -102,11 +108,22 @@ impl Function {
         self.parameters.iter().find(|parameter| parameter.id == id)
     }
 
+    #[must_use]
+    pub const fn has_body(&self) -> bool {
+        self.body.is_some()
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> Option<&FunctionBody> {
+        self.body.as_ref()
+    }
+
     pub(super) fn copied(&self) -> Self {
         Self {
             id: self.id,
-            return_type: copy_intrinsic_type(&self.return_type),
+            return_type: self.return_type.copied(),
             parameters: self.parameters.iter().map(Parameter::copied).collect(),
+            body: self.body.as_ref().map(FunctionBody::copied),
             presentation: self.presentation.copied(),
         }
     }
@@ -175,6 +192,8 @@ pub(super) struct RevisionState {
     pub(super) committed_module_ids: HashSet<ModuleId>,
     pub(super) committed_function_ids: HashSet<FunctionId>,
     pub(super) committed_parameter_ids: HashSet<ParameterId>,
+    pub(super) committed_block_ids: HashSet<BlockId>,
+    pub(super) committed_expression_ids: HashSet<ExpressionId>,
 }
 
 impl RevisionState {
@@ -236,6 +255,24 @@ impl ProgramSnapshot {
         find_parameter(&self.state.modules, id)
     }
 
+    #[must_use]
+    pub fn block(&self, id: BlockId) -> Option<&Block> {
+        find_block(&self.state.modules, id)
+    }
+
+    #[must_use]
+    pub fn expression(&self, id: ExpressionId) -> Option<&Expression> {
+        find_expression(&self.state.modules, id)
+    }
+
+    #[must_use]
+    pub fn expression_type(
+        &self,
+        id: ExpressionId,
+    ) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+        derive_expression_type(&self.state.modules, id)
+    }
+
     pub fn validate_structure(&self) -> Result<(), StructuralError> {
         validate_revision_state(&self.state)
     }
@@ -257,6 +294,17 @@ impl ProgramSnapshot {
             .flat_map(|module| module.functions.values())
             .flat_map(|function| function.parameters.iter().map(Parameter::id))
             .collect();
+        let committed_block_ids = modules
+            .values()
+            .flat_map(|module| module.functions.values())
+            .filter_map(|function| function.body().map(FunctionBody::block_id))
+            .collect();
+        let committed_expression_ids = modules
+            .values()
+            .flat_map(|module| module.functions.values())
+            .filter_map(Function::body)
+            .flat_map(|body| body.block().expressions().map(Expression::id))
+            .collect();
 
         Ok(MnirProgram {
             program_id,
@@ -266,11 +314,15 @@ impl ProgramSnapshot {
                 committed_module_ids,
                 committed_function_ids,
                 committed_parameter_ids,
+                committed_block_ids,
+                committed_expression_ids,
             }),
             next_revision_raw: Some(2),
             next_module_raw: Some(1),
             next_function_raw: Some(1),
             next_parameter_raw: Some(1),
+            next_block_raw: Some(1),
+            next_expression_raw: Some(1),
         })
     }
 }
@@ -284,6 +336,8 @@ pub struct MnirProgram {
     pub(super) next_module_raw: Option<u64>,
     pub(super) next_function_raw: Option<u64>,
     pub(super) next_parameter_raw: Option<u64>,
+    pub(super) next_block_raw: Option<u64>,
+    pub(super) next_expression_raw: Option<u64>,
 }
 
 impl MnirProgram {
@@ -298,11 +352,15 @@ impl MnirProgram {
                 committed_module_ids: HashSet::new(),
                 committed_function_ids: HashSet::new(),
                 committed_parameter_ids: HashSet::new(),
+                committed_block_ids: HashSet::new(),
+                committed_expression_ids: HashSet::new(),
             }),
             next_revision_raw: Some(2),
             next_module_raw: Some(1),
             next_function_raw: Some(1),
             next_parameter_raw: Some(1),
+            next_block_raw: Some(1),
+            next_expression_raw: Some(1),
         })
     }
 
@@ -337,6 +395,24 @@ impl MnirProgram {
     }
 
     #[must_use]
+    pub fn block(&self, id: BlockId) -> Option<&Block> {
+        find_block(&self.head.modules, id)
+    }
+
+    #[must_use]
+    pub fn expression(&self, id: ExpressionId) -> Option<&Expression> {
+        find_expression(&self.head.modules, id)
+    }
+
+    #[must_use]
+    pub fn expression_type(
+        &self,
+        id: ExpressionId,
+    ) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+        derive_expression_type(&self.head.modules, id)
+    }
+
+    #[must_use]
     pub fn committed_module_id_count(&self) -> usize {
         self.head.committed_module_ids.len()
     }
@@ -364,6 +440,26 @@ impl MnirProgram {
     #[must_use]
     pub fn is_parameter_id_committed(&self, id: ParameterId) -> bool {
         self.head.committed_parameter_ids.contains(&id)
+    }
+
+    #[must_use]
+    pub fn committed_block_id_count(&self) -> usize {
+        self.head.committed_block_ids.len()
+    }
+
+    #[must_use]
+    pub fn is_block_id_committed(&self, id: BlockId) -> bool {
+        self.head.committed_block_ids.contains(&id)
+    }
+
+    #[must_use]
+    pub fn committed_expression_id_count(&self) -> usize {
+        self.head.committed_expression_ids.len()
+    }
+
+    #[must_use]
+    pub fn is_expression_id_committed(&self, id: ExpressionId) -> bool {
+        self.head.committed_expression_ids.contains(&id)
     }
 
     #[must_use]
@@ -422,6 +518,77 @@ pub(super) fn find_parameter_mut(
         })
 }
 
+pub(super) fn find_block(modules: &HashMap<ModuleId, Module>, id: BlockId) -> Option<&Block> {
+    modules
+        .values()
+        .flat_map(|module| module.functions.values())
+        .filter_map(Function::body)
+        .map(FunctionBody::block)
+        .find(|block| block.id == id)
+}
+
+pub(super) fn find_block_mut(
+    modules: &mut HashMap<ModuleId, Module>,
+    id: BlockId,
+) -> Option<&mut Block> {
+    modules
+        .values_mut()
+        .flat_map(|module| module.functions.values_mut())
+        .filter_map(|function| function.body.as_mut())
+        .map(|body| &mut body.block)
+        .find(|block| block.id == id)
+}
+
+pub(super) fn find_block_owner(
+    modules: &HashMap<ModuleId, Module>,
+    id: BlockId,
+) -> Option<&Function> {
+    modules
+        .values()
+        .flat_map(|module| module.functions.values())
+        .find(|function| function.body().is_some_and(|body| body.block_id() == id))
+}
+
+pub(super) fn find_expression(
+    modules: &HashMap<ModuleId, Module>,
+    id: ExpressionId,
+) -> Option<&Expression> {
+    modules
+        .values()
+        .flat_map(|module| module.functions.values())
+        .filter_map(Function::body)
+        .find_map(|body| body.block().expression(id))
+}
+
+pub(super) fn derive_expression_type(
+    modules: &HashMap<ModuleId, Module>,
+    id: ExpressionId,
+) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+    let (function, expression) = modules
+        .values()
+        .flat_map(|module| module.functions.values())
+        .find_map(|function| {
+            function
+                .body()
+                .and_then(|body| body.block().expression(id))
+                .map(|expression| (function, expression))
+        })?;
+
+    Some(match expression.kind {
+        ExpressionKind::Int32Literal(_) => Ok(IntrinsicType::Int32),
+        ExpressionKind::Int64Literal(_) => Ok(IntrinsicType::Int64),
+        ExpressionKind::BoolLiteral(_) => Ok(IntrinsicType::Bool),
+        ExpressionKind::UnitLiteral => Ok(IntrinsicType::Unit),
+        ExpressionKind::ParameterReference(parameter_id) => function
+            .parameter(parameter_id)
+            .map(|parameter| parameter.intrinsic_type.copied())
+            .ok_or(ExpressionTypeError::UnresolvedParameter {
+                expression_id: id,
+                parameter_id,
+            }),
+    })
+}
+
 fn allocate_program_id() -> Result<ProgramId, MutationError> {
     NEXT_PROGRAM_ID
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
@@ -429,13 +596,4 @@ fn allocate_program_id() -> Result<ProgramId, MutationError> {
         })
         .map(ProgramId)
         .map_err(|_| MutationError::IdentifierExhausted(IdentifierCategory::Program))
-}
-
-fn copy_intrinsic_type(intrinsic_type: &IntrinsicType) -> IntrinsicType {
-    match intrinsic_type {
-        IntrinsicType::Int32 => IntrinsicType::Int32,
-        IntrinsicType::Int64 => IntrinsicType::Int64,
-        IntrinsicType::Bool => IntrinsicType::Bool,
-        IntrinsicType::Unit => IntrinsicType::Unit,
-    }
 }
