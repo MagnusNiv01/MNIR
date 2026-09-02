@@ -65,3 +65,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check --workspace
 cargo test --workspace
 ```
+
+## License
+
+MNIR is licensed under the [Apache License 2.0](LICENSE).
