@@ -16,5 +16,6 @@ If required behavior is absent, ambiguous, or contradictory, report a `SPECIFICA
 - [`05-arithmetic-expressions.md`](05-arithmetic-expressions.md) — Draft normative Arithmetic Expressions 0.1 specification defining binary signed-integer arithmetic Expressions, derived types, dependency integrity, and abstract checked-arithmetic fault semantics.
 - [`06-semantic-verification-and-diagnostics.md`](06-semantic-verification-and-diagnostics.md) — Draft normative Semantic Verification and Diagnostics 0.1 specification defining revision-bound verification, verified artifacts, and machine-readable semantic diagnostics.
 - [`07-comparison-expressions.md`](07-comparison-expressions.md) — Draft normative Comparison Expressions 0.1 specification defining equality and signed-integer ordering comparisons together with Semantic Verification rule set version 0.2.
+- [`08-conditional-control-flow.md`](08-conditional-control-flow.md) — Draft normative Conditional Control Flow 0.1 specification defining finite acyclic multi-Block Function bodies, Branch terminators, CFG validity, and Semantic Verification rule set version 0.3.
 
 Later specification increments will define additional MNIR semantics.

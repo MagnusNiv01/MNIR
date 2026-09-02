@@ -1,3 +1,7 @@
+<p align="left">
+  <img src="assets/mnir-icon.png" alt="MNIR icon" width="180">
+</p>
+
 # MNIR
 
 MNIR stands for **Magnus Nivinger Intermediate Representation**. The project is experimental and in its earliest design phase; it is not yet a usable programming language.
