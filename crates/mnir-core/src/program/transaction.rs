@@ -8,7 +8,7 @@ use crate::ids::{
     BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, RevisionId,
 };
 
-use super::body::{Block, Expression, ExpressionKind, FunctionBody};
+use super::body::{Block, Expression, ExpressionKind, FunctionBody, Terminator};
 use super::error::{ExpressionTypeError, MutationError, TransactionState};
 use super::model::{
     Function, MnirProgram, Module, Parameter, ProgramSnapshot, RevisionState,
@@ -364,8 +364,8 @@ impl MutationTransaction<'_> {
         Ok(())
     }
 
-    /// Creates the optional body and its sole, initially unterminated Block
-    /// (`MNIR-EXPR-044`, `MNIR-EXPR-051`).
+    /// Creates the optional body and its initially unterminated entry Block
+    /// (`MNIR-CFG-005`, preserving `MNIR-EXPR-044` and `MNIR-EXPR-051`).
     pub fn create_function_body(
         &mut self,
         function_id: FunctionId,
@@ -400,6 +400,58 @@ impl MutationTransaction<'_> {
         if function.body.take().is_none() {
             return Err(self.fail(MutationError::FunctionBodyAbsent(function_id)));
         }
+        Ok(())
+    }
+
+    /// Adds an initially unterminated non-entry Block to an existing body
+    /// (`MNIR-CFG-009` through `MNIR-CFG-011`).
+    pub fn add_block(&mut self, function_id: FunctionId) -> Result<BlockId, MutationError> {
+        self.require_active()?;
+
+        let Some(function) = find_function(&self.working_modules, function_id) else {
+            return Err(self.fail(MutationError::UnknownFunction(function_id)));
+        };
+        if function.body.is_none() {
+            return Err(self.fail(MutationError::FunctionBodyAbsent(function_id)));
+        }
+
+        let block_id = match self.allocate_block_id() {
+            Ok(id) => id,
+            Err(error) => return Err(self.fail(error)),
+        };
+        let Some(body) = find_function_mut(&mut self.working_modules, function_id)
+            .and_then(|function| function.body.as_mut())
+        else {
+            return Err(self.fail(MutationError::FunctionBodyAbsent(function_id)));
+        };
+        body.blocks.insert(block_id, Block::new(block_id));
+        self.provisional_block_ids.insert(block_id);
+        Ok(block_id)
+    }
+
+    /// Removes one non-entry Block and everything it owns. Incoming Branch
+    /// references are deliberately left for the caller to repair before
+    /// commit (`MNIR-CFG-012` through `MNIR-CFG-015`).
+    pub fn remove_block(&mut self, block_id: BlockId) -> Result<(), MutationError> {
+        self.require_active()?;
+
+        let Some(owner) = find_block_owner(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        let function_id = owner.id;
+        if owner
+            .body()
+            .is_some_and(|body| body.entry_block_id() == block_id)
+        {
+            return Err(self.fail(MutationError::EntryBlockCannotBeRemoved(block_id)));
+        }
+
+        let Some(body) = find_function_mut(&mut self.working_modules, function_id)
+            .and_then(|function| function.body.as_mut())
+        else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        body.blocks.remove(&block_id);
         Ok(())
     }
 
@@ -605,7 +657,64 @@ impl MutationTransaction<'_> {
         let Some(block) = find_block_mut(&mut self.working_modules, block_id) else {
             return Err(self.fail(MutationError::UnknownBlock(block_id)));
         };
-        block.return_expression_id = Some(expression_id);
+        block.terminator = Some(Terminator::Return {
+            expression: expression_id,
+        });
+        Ok(())
+    }
+
+    /// Installs or replaces the Branch terminator on `source_block_id`.
+    pub fn set_branch(
+        &mut self,
+        source_block_id: BlockId,
+        condition_expression_id: ExpressionId,
+        true_block_id: BlockId,
+        false_block_id: BlockId,
+    ) -> Result<(), MutationError> {
+        self.require_active()?;
+
+        let Some(source_owner) = find_block_owner(&self.working_modules, source_block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(source_block_id)));
+        };
+        let source_function_id = source_owner.id;
+        let source_body = source_owner.body().expect("Block owner has a body");
+        let source_block = source_body
+            .block_by_id(source_block_id)
+            .expect("Block owner contains Block");
+
+        if source_block.expression(condition_expression_id).is_none() {
+            let error = if find_expression(&self.working_modules, condition_expression_id).is_some()
+            {
+                MutationError::ExpressionNotOwnedByBlock {
+                    expression_id: condition_expression_id,
+                    block_id: source_block_id,
+                }
+            } else {
+                MutationError::UnknownExpression(condition_expression_id)
+            };
+            return Err(self.fail(error));
+        }
+
+        for target_block_id in [true_block_id, false_block_id] {
+            if find_block(&self.working_modules, target_block_id).is_none() {
+                return Err(self.fail(MutationError::UnknownBlock(target_block_id)));
+            }
+            if source_body.block_by_id(target_block_id).is_none() {
+                return Err(self.fail(MutationError::BlockNotOwnedByFunctionBody {
+                    block_id: target_block_id,
+                    function_id: source_function_id,
+                }));
+            }
+        }
+
+        let Some(source_block) = find_block_mut(&mut self.working_modules, source_block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(source_block_id)));
+        };
+        source_block.terminator = Some(Terminator::Branch {
+            condition: condition_expression_id,
+            true_block: true_block_id,
+            false_block: false_block_id,
+        });
         Ok(())
     }
 

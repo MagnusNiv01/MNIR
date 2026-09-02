@@ -1,9 +1,9 @@
 use std::fmt;
 
-use mnir_core::{ExpressionId, FunctionId, IntrinsicType};
+use mnir_core::{BlockId, ExpressionId, FunctionId, IntrinsicType};
 
 /// Stable machine-readable diagnostic categories defined by verification rule
-/// sets V0_1 and V0_2.
+/// sets V0_1 through V0_3.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticCode {
     ArithmeticOperandTypeUnavailable,
@@ -13,6 +13,9 @@ pub enum DiagnosticCode {
     ComparisonOperandTypeUnavailable,
     ComparisonOperandTypeMismatch,
     ComparisonUnsupportedOperandType,
+    BranchConditionTypeUnavailable,
+    BranchConditionNotBool,
+    ControlFlowReturnTypeMismatch,
 }
 
 impl DiagnosticCode {
@@ -27,6 +30,9 @@ impl DiagnosticCode {
             Self::ComparisonOperandTypeUnavailable => "MNIR-DIAG-005",
             Self::ComparisonOperandTypeMismatch => "MNIR-DIAG-006",
             Self::ComparisonUnsupportedOperandType => "MNIR-DIAG-007",
+            Self::BranchConditionTypeUnavailable => "MNIR-DIAG-008",
+            Self::BranchConditionNotBool => "MNIR-DIAG-009",
+            Self::ControlFlowReturnTypeMismatch => "MNIR-DIAG-010",
         }
     }
 }
@@ -37,7 +43,7 @@ impl fmt::Display for DiagnosticCode {
     }
 }
 
-/// The only diagnostic severity defined by V0_1 and V0_2.
+/// The only diagnostic severity defined by V0_1 through V0_3.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticSeverity {
     Error,
@@ -46,11 +52,12 @@ pub enum DiagnosticSeverity {
 /// The identity paired with a code for duplicate prevention.
 ///
 /// This is deliberately limited to the concrete subjects defined by
-/// `MNIR-VERIFY-086`; it is not a generic node abstraction.
+/// the active rule sets; it is not a generic node abstraction.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticPrimarySubject {
     Expression(ExpressionId),
     Function(FunctionId),
+    Block(BlockId),
 }
 
 /// One semantic verification failure with its complete normative payload.
@@ -86,6 +93,22 @@ pub enum Diagnostic {
         expression_id: ExpressionId,
         operand_type: IntrinsicType,
     },
+    BranchConditionTypeUnavailable {
+        block_id: BlockId,
+        condition_expression_id: ExpressionId,
+    },
+    BranchConditionNotBool {
+        block_id: BlockId,
+        condition_expression_id: ExpressionId,
+        actual_type: IntrinsicType,
+    },
+    ControlFlowReturnTypeMismatch {
+        function_id: FunctionId,
+        block_id: BlockId,
+        return_expression_id: ExpressionId,
+        expected_type: IntrinsicType,
+        actual_type: IntrinsicType,
+    },
 }
 
 impl Diagnostic {
@@ -112,11 +135,17 @@ impl Diagnostic {
             Self::ComparisonUnsupportedOperandType { .. } => {
                 DiagnosticCode::ComparisonUnsupportedOperandType
             }
+            Self::BranchConditionTypeUnavailable { .. } => {
+                DiagnosticCode::BranchConditionTypeUnavailable
+            }
+            Self::BranchConditionNotBool { .. } => DiagnosticCode::BranchConditionNotBool,
+            Self::ControlFlowReturnTypeMismatch { .. } => {
+                DiagnosticCode::ControlFlowReturnTypeMismatch
+            }
         }
     }
 
-    /// Every currently defined diagnostic has Error severity
-    /// (`MNIR-VERIFY-020`, `MNIR-CMP-068`).
+    /// Every currently defined diagnostic has Error severity.
     #[must_use]
     pub const fn severity(&self) -> DiagnosticSeverity {
         DiagnosticSeverity::Error
@@ -136,6 +165,11 @@ impl Diagnostic {
             }
             Self::ReturnTypeMismatch { function_id, .. } => {
                 DiagnosticPrimarySubject::Function(*function_id)
+            }
+            Self::BranchConditionTypeUnavailable { block_id, .. }
+            | Self::BranchConditionNotBool { block_id, .. }
+            | Self::ControlFlowReturnTypeMismatch { block_id, .. } => {
+                DiagnosticPrimarySubject::Block(*block_id)
             }
         }
     }

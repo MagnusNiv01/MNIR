@@ -4,6 +4,7 @@ use std::fmt;
 
 use mnir_core::{
     Block, ExpressionId, ExpressionKind, Function, IntrinsicType, ProgramSnapshot, StructuralError,
+    Terminator,
 };
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPrimarySubject};
@@ -115,11 +116,9 @@ pub fn verify_with_rule_set(
         .validate_structure()
         .map_err(VerificationError::StructuralInput)?;
 
-    // Applicability is scanned across the complete revision before any V0_1
-    // semantic check can produce a result (`MNIR-CMP-101` through -105).
-    if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1
-        && contains_comparison_expression(snapshot)
-    {
+    // Applicability is scanned across the complete revision before semantic
+    // verification begins (`MNIR-CFG-075` through `MNIR-CFG-077`, -129, -130).
+    if !rule_set_is_applicable(snapshot, rule_set) {
         return Err(VerificationError::RuleSetNotApplicable {
             requested_rule_set: rule_set,
         });
@@ -145,13 +144,26 @@ pub fn verify_with_rule_set(
     }
 }
 
-fn contains_comparison_expression(snapshot: &ProgramSnapshot) -> bool {
-    snapshot.modules().any(|module| {
+fn rule_set_is_applicable(snapshot: &ProgramSnapshot, rule_set: VerificationRuleSet) -> bool {
+    if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_3 {
+        return true;
+    }
+
+    !snapshot.modules().any(|module| {
         module.functions().any(|function| {
             function.body().is_some_and(|body| {
-                body.block()
-                    .expressions()
-                    .any(|expression| comparison_operands(expression.kind()).is_some())
+                let has_conditional_control_flow = body.block_count() > 1
+                    || body
+                        .blocks()
+                        .any(|block| matches!(block.terminator(), Some(Terminator::Branch { .. })));
+                let has_comparison = body.blocks().any(|block| {
+                    block
+                        .expressions()
+                        .any(|expression| comparison_operands(expression.kind()).is_some())
+                });
+                has_conditional_control_flow
+                    || (rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1
+                        && has_comparison)
             })
         })
     })
@@ -166,55 +178,63 @@ fn verify_function(
     let Some(body) = function.body() else {
         return;
     };
-    let block = body.block();
-    let mut memo = HashMap::new();
+    for block in body.blocks() {
+        verify_block_expressions(function, block, rule_set, diagnostics, seen);
 
+        match block.terminator() {
+            Some(Terminator::Return { expression }) => verify_return(
+                function,
+                block,
+                *expression,
+                body.block_count() > 1,
+                diagnostics,
+                seen,
+            ),
+            Some(Terminator::Branch { condition, .. }) => {
+                let mut memo = HashMap::new();
+                let diagnostic = match inspect_expression(function, block, *condition, &mut memo) {
+                    TypeInspection::Valid(IntrinsicType::Bool) => None,
+                    TypeInspection::Valid(actual_type) => {
+                        Some(Diagnostic::BranchConditionNotBool {
+                            block_id: block.id(),
+                            condition_expression_id: *condition,
+                            actual_type,
+                        })
+                    }
+                    TypeInspection::Unavailable
+                    | TypeInspection::Mismatch { .. }
+                    | TypeInspection::Unsupported(_) => {
+                        Some(Diagnostic::BranchConditionTypeUnavailable {
+                            block_id: block.id(),
+                            condition_expression_id: *condition,
+                        })
+                    }
+                };
+                if let Some(diagnostic) = diagnostic {
+                    collect(diagnostic, diagnostics, seen);
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+fn verify_block_expressions(
+    function: &Function,
+    block: &Block,
+    rule_set: VerificationRuleSet,
+    diagnostics: &mut Vec<Diagnostic>,
+    seen: &mut HashSet<(DiagnosticCode, DiagnosticPrimarySubject)>,
+) {
+    let mut memo = HashMap::new();
     for expression in block.expressions() {
         let inspection = inspect_expression(function, block, expression.id(), &mut memo);
         let diagnostic = if arithmetic_operands(expression.kind()).is_some() {
-            match inspection {
-                TypeInspection::Valid(_) => None,
-                TypeInspection::Unavailable => Some(Diagnostic::ArithmeticOperandTypeUnavailable {
-                    expression_id: expression.id(),
-                }),
-                TypeInspection::Mismatch {
-                    left_type,
-                    right_type,
-                } => Some(Diagnostic::ArithmeticOperandTypeMismatch {
-                    expression_id: expression.id(),
-                    left_type,
-                    right_type,
-                }),
-                TypeInspection::Unsupported(operand_type) => {
-                    Some(Diagnostic::ArithmeticUnsupportedOperandType {
-                        expression_id: expression.id(),
-                        operand_type,
-                    })
-                }
-            }
-        } else if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_2
+            arithmetic_diagnostic(expression.id(), inspection)
+        } else if rule_set != VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1
             && comparison_operands(expression.kind()).is_some()
         {
-            match inspection {
-                TypeInspection::Valid(_) => None,
-                TypeInspection::Unavailable => Some(Diagnostic::ComparisonOperandTypeUnavailable {
-                    expression_id: expression.id(),
-                }),
-                TypeInspection::Mismatch {
-                    left_type,
-                    right_type,
-                } => Some(Diagnostic::ComparisonOperandTypeMismatch {
-                    expression_id: expression.id(),
-                    left_type,
-                    right_type,
-                }),
-                TypeInspection::Unsupported(operand_type) => {
-                    Some(Diagnostic::ComparisonUnsupportedOperandType {
-                        expression_id: expression.id(),
-                        operand_type,
-                    })
-                }
-            }
+            comparison_diagnostic(expression.id(), inspection)
         } else {
             None
         };
@@ -222,31 +242,94 @@ fn verify_function(
             collect(diagnostic, diagnostics, seen);
         }
     }
+}
 
-    let Some(return_expression_id) = block.return_expression_id() else {
-        return;
-    };
-    let TypeInspection::Valid(actual_type) =
-        inspect_expression(function, block, return_expression_id, &mut memo)
-    else {
-        // The applicable operand diagnostic is emitted above. Neither rule set
-        // defines a ReturnTypeUnavailable diagnostic (`MNIR-VERIFY-041`,
-        // `MNIR-CMP-079`).
-        return;
-    };
-
-    if &actual_type != function.return_type() {
-        collect(
-            Diagnostic::ReturnTypeMismatch {
-                function_id: function.id(),
-                return_expression_id,
-                expected_type: copy_intrinsic_type(function.return_type()),
-                actual_type,
-            },
-            diagnostics,
-            seen,
-        );
+fn arithmetic_diagnostic(
+    expression_id: ExpressionId,
+    inspection: TypeInspection,
+) -> Option<Diagnostic> {
+    match inspection {
+        TypeInspection::Valid(_) => None,
+        TypeInspection::Unavailable => {
+            Some(Diagnostic::ArithmeticOperandTypeUnavailable { expression_id })
+        }
+        TypeInspection::Mismatch {
+            left_type,
+            right_type,
+        } => Some(Diagnostic::ArithmeticOperandTypeMismatch {
+            expression_id,
+            left_type,
+            right_type,
+        }),
+        TypeInspection::Unsupported(operand_type) => {
+            Some(Diagnostic::ArithmeticUnsupportedOperandType {
+                expression_id,
+                operand_type,
+            })
+        }
     }
+}
+
+fn comparison_diagnostic(
+    expression_id: ExpressionId,
+    inspection: TypeInspection,
+) -> Option<Diagnostic> {
+    match inspection {
+        TypeInspection::Valid(_) => None,
+        TypeInspection::Unavailable => {
+            Some(Diagnostic::ComparisonOperandTypeUnavailable { expression_id })
+        }
+        TypeInspection::Mismatch {
+            left_type,
+            right_type,
+        } => Some(Diagnostic::ComparisonOperandTypeMismatch {
+            expression_id,
+            left_type,
+            right_type,
+        }),
+        TypeInspection::Unsupported(operand_type) => {
+            Some(Diagnostic::ComparisonUnsupportedOperandType {
+                expression_id,
+                operand_type,
+            })
+        }
+    }
+}
+
+fn verify_return(
+    function: &Function,
+    block: &Block,
+    return_expression_id: ExpressionId,
+    multi_block: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+    seen: &mut HashSet<(DiagnosticCode, DiagnosticPrimarySubject)>,
+) {
+    let TypeInspection::Valid(actual_type) =
+        inspect_expression(function, block, return_expression_id, &mut HashMap::new())
+    else {
+        return;
+    };
+    if &actual_type == function.return_type() {
+        return;
+    }
+
+    let diagnostic = if multi_block {
+        Diagnostic::ControlFlowReturnTypeMismatch {
+            function_id: function.id(),
+            block_id: block.id(),
+            return_expression_id,
+            expected_type: copy_intrinsic_type(function.return_type()),
+            actual_type,
+        }
+    } else {
+        Diagnostic::ReturnTypeMismatch {
+            function_id: function.id(),
+            return_expression_id,
+            expected_type: copy_intrinsic_type(function.return_type()),
+            actual_type,
+        }
+    };
+    collect(diagnostic, diagnostics, seen);
 }
 
 fn collect(

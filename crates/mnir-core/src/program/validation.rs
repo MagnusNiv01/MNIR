@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::ids::{BlockId, ExpressionId, FunctionId, ModuleId, ParameterId};
 
-use super::body::{Block, ExpressionKind};
+use super::body::{Block, ExpressionKind, Terminator};
 use super::error::StructuralError;
 use super::model::{Module, RevisionState};
 
@@ -68,77 +68,208 @@ pub(super) fn validate_modules(
             let Some(body) = &function.body else {
                 continue;
             };
-            let block = &body.block;
-            if !committed_block_ids.contains(&block.id) {
-                return Err(StructuralError::BlockIdentityNotCommitted(block.id));
+            if body.blocks.is_empty() {
+                return Err(StructuralError::FunctionBodyHasNoBlocks(function.id));
             }
-            if !seen_block_ids.insert(block.id) {
-                return Err(StructuralError::DuplicateBlockIdentity(block.id));
-            }
-
-            for (&collection_id, expression) in &block.expressions {
-                if collection_id != expression.id {
-                    return Err(StructuralError::ExpressionIdentityMismatch {
-                        collection_id,
-                        expression_id: expression.id,
-                    });
-                }
-                if !committed_expression_ids.contains(&expression.id) {
-                    return Err(StructuralError::ExpressionIdentityNotCommitted(
-                        expression.id,
-                    ));
-                }
-                if !seen_expression_ids.insert(expression.id) {
-                    return Err(StructuralError::DuplicateExpressionIdentity(expression.id));
-                }
-                if let ExpressionKind::ParameterReference(parameter_id) = expression.kind
-                    && function.parameter(parameter_id).is_none()
-                {
-                    return Err(StructuralError::DanglingParameterReference {
-                        expression_id: expression.id,
-                        parameter_id,
-                        function_id: function.id,
-                    });
-                }
-                if let Some((left, right)) = expression.kind.arithmetic_operands() {
-                    for operand_id in [left, right] {
-                        if !block.expressions.contains_key(&operand_id) {
-                            return Err(StructuralError::ArithmeticOperandNotInBlock {
-                                expression_id: expression.id,
-                                operand_id,
-                                block_id: block.id,
-                            });
-                        }
-                    }
-                }
-                if let Some((left, right)) = expression.kind.comparison_operands() {
-                    for operand_id in [left, right] {
-                        if !block.expressions.contains_key(&operand_id) {
-                            return Err(StructuralError::ComparisonOperandNotInBlock {
-                                expression_id: expression.id,
-                                operand_id,
-                                block_id: block.id,
-                            });
-                        }
-                    }
-                }
-            }
-
-            validate_acyclic_expression_dependencies(block)?;
-
-            let Some(return_expression_id) = block.return_expression_id else {
-                return Err(StructuralError::UnterminatedBlock(block.id));
-            };
-            if !block.expressions.contains_key(&return_expression_id) {
-                return Err(StructuralError::ReturnExpressionNotInBlock {
-                    block_id: block.id,
-                    expression_id: return_expression_id,
+            if !body.blocks.contains_key(&body.entry_block_id) {
+                return Err(StructuralError::EntryBlockNotInBody {
+                    function_id: function.id,
+                    entry_block_id: body.entry_block_id,
                 });
             }
+
+            for (&block_collection_id, block) in &body.blocks {
+                if block_collection_id != block.id {
+                    return Err(StructuralError::BlockIdentityMismatch {
+                        collection_id: block_collection_id,
+                        block_id: block.id,
+                    });
+                }
+                if !committed_block_ids.contains(&block.id) {
+                    return Err(StructuralError::BlockIdentityNotCommitted(block.id));
+                }
+                if !seen_block_ids.insert(block.id) {
+                    return Err(StructuralError::DuplicateBlockIdentity(block.id));
+                }
+
+                validate_block_expressions(
+                    function,
+                    block,
+                    committed_expression_ids,
+                    &mut seen_expression_ids,
+                )?;
+                validate_acyclic_expression_dependencies(block)?;
+
+                match block.terminator {
+                    None => return Err(StructuralError::UnterminatedBlock(block.id)),
+                    Some(Terminator::Return { expression }) => {
+                        if !block.expressions.contains_key(&expression) {
+                            return Err(StructuralError::ReturnExpressionNotInBlock {
+                                block_id: block.id,
+                                expression_id: expression,
+                            });
+                        }
+                    }
+                    Some(Terminator::Branch {
+                        condition,
+                        true_block,
+                        false_block,
+                    }) => {
+                        if !block.expressions.contains_key(&condition) {
+                            return Err(StructuralError::BranchConditionNotInBlock {
+                                block_id: block.id,
+                                expression_id: condition,
+                            });
+                        }
+                        for target_block_id in [true_block, false_block] {
+                            if !body.blocks.contains_key(&target_block_id) {
+                                return Err(StructuralError::BranchTargetNotInBody {
+                                    block_id: block.id,
+                                    target_block_id,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            validate_control_flow(function.id, body.entry_block_id, &body.blocks)?;
         }
     }
 
     Ok(())
+}
+
+fn validate_block_expressions(
+    function: &super::model::Function,
+    block: &Block,
+    committed_expression_ids: &HashSet<ExpressionId>,
+    seen_expression_ids: &mut HashSet<ExpressionId>,
+) -> Result<(), StructuralError> {
+    for (&collection_id, expression) in &block.expressions {
+        if collection_id != expression.id {
+            return Err(StructuralError::ExpressionIdentityMismatch {
+                collection_id,
+                expression_id: expression.id,
+            });
+        }
+        if !committed_expression_ids.contains(&expression.id) {
+            return Err(StructuralError::ExpressionIdentityNotCommitted(
+                expression.id,
+            ));
+        }
+        if !seen_expression_ids.insert(expression.id) {
+            return Err(StructuralError::DuplicateExpressionIdentity(expression.id));
+        }
+        if let ExpressionKind::ParameterReference(parameter_id) = expression.kind
+            && function.parameter(parameter_id).is_none()
+        {
+            return Err(StructuralError::DanglingParameterReference {
+                expression_id: expression.id,
+                parameter_id,
+                function_id: function.id,
+            });
+        }
+        if let Some((left, right)) = expression.kind.arithmetic_operands() {
+            for operand_id in [left, right] {
+                if !block.expressions.contains_key(&operand_id) {
+                    return Err(StructuralError::ArithmeticOperandNotInBlock {
+                        expression_id: expression.id,
+                        operand_id,
+                        block_id: block.id,
+                    });
+                }
+            }
+        }
+        if let Some((left, right)) = expression.kind.comparison_operands() {
+            for operand_id in [left, right] {
+                if !block.expressions.contains_key(&operand_id) {
+                    return Err(StructuralError::ComparisonOperandNotInBlock {
+                        expression_id: expression.id,
+                        operand_id,
+                        block_id: block.id,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_control_flow(
+    function_id: FunctionId,
+    entry_block_id: BlockId,
+    blocks: &HashMap<BlockId, Block>,
+) -> Result<(), StructuralError> {
+    let mut reachable = HashSet::new();
+    let mut pending = vec![entry_block_id];
+    while let Some(block_id) = pending.pop() {
+        if !reachable.insert(block_id) {
+            continue;
+        }
+        if let Some(Terminator::Branch {
+            true_block,
+            false_block,
+            ..
+        }) = blocks.get(&block_id).and_then(|block| block.terminator)
+        {
+            pending.push(true_block);
+            pending.push(false_block);
+        }
+    }
+    if let Some(&block_id) = blocks.keys().find(|id| !reachable.contains(id)) {
+        return Err(StructuralError::UnreachableBlock {
+            function_id,
+            block_id,
+        });
+    }
+
+    let mut indegree = HashMap::with_capacity(blocks.len());
+    for &block_id in blocks.keys() {
+        indegree.insert(block_id, 0_usize);
+    }
+    for block in blocks.values() {
+        if let Some(Terminator::Branch {
+            true_block,
+            false_block,
+            ..
+        }) = block.terminator
+        {
+            *indegree
+                .get_mut(&true_block)
+                .expect("validated Branch target") += 1;
+            *indegree
+                .get_mut(&false_block)
+                .expect("validated Branch target") += 1;
+        }
+    }
+    let mut ready: VecDeque<_> = indegree
+        .iter()
+        .filter_map(|(&id, &count)| (count == 0).then_some(id))
+        .collect();
+    let mut processed = 0;
+    while let Some(block_id) = ready.pop_front() {
+        processed += 1;
+        if let Some(Terminator::Branch {
+            true_block,
+            false_block,
+            ..
+        }) = blocks.get(&block_id).and_then(|block| block.terminator)
+        {
+            for target in [true_block, false_block] {
+                let count = indegree.get_mut(&target).expect("validated Branch target");
+                *count -= 1;
+                if *count == 0 {
+                    ready.push_back(target);
+                }
+            }
+        }
+    }
+    if processed == blocks.len() {
+        Ok(())
+    } else {
+        Err(StructuralError::CyclicControlFlow(function_id))
+    }
 }
 
 /// Uses Kahn's algorithm so structural validation does not depend on recursive
@@ -191,9 +322,9 @@ fn validate_acyclic_expression_dependencies(block: &Block) -> Result<(), Structu
 #[cfg(test)]
 mod tests {
     use crate::IntrinsicType;
-    use crate::ids::{ExpressionId, FunctionId, ModuleId};
+    use crate::ids::{BlockId, ExpressionId, FunctionId, ModuleId};
 
-    use super::super::body::ExpressionKind;
+    use super::super::body::{ExpressionKind, Terminator};
     use super::super::error::{MutationError, StructuralError, TransactionState};
     use super::super::model::MnirProgram;
 
@@ -392,8 +523,12 @@ mod tests {
             .body
             .as_mut()
             .unwrap()
-            .block
-            .return_expression_id = Some(corrupt_expression_id);
+            .blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .terminator = Some(Terminator::Return {
+            expression: corrupt_expression_id,
+        });
 
         assert!(matches!(
             transaction.commit(),
@@ -440,7 +575,9 @@ mod tests {
             .body
             .as_mut()
             .unwrap()
-            .block;
+            .blocks
+            .get_mut(&block_id)
+            .unwrap();
         block.expressions.get_mut(&first).unwrap().kind = ExpressionKind::Add {
             left: second,
             right: second,
@@ -488,7 +625,9 @@ mod tests {
             .body
             .as_mut()
             .unwrap()
-            .block
+            .blocks
+            .get_mut(&block_id)
+            .unwrap()
             .expressions
             .get_mut(&expression_id)
             .unwrap()
@@ -539,7 +678,9 @@ mod tests {
             .body
             .as_mut()
             .unwrap()
-            .block;
+            .blocks
+            .get_mut(&block_id)
+            .unwrap();
         block.expressions.get_mut(&arithmetic).unwrap().kind = ExpressionKind::Add {
             left: comparison,
             right: comparison,
@@ -587,7 +728,9 @@ mod tests {
             .body
             .as_mut()
             .unwrap()
-            .block
+            .blocks
+            .get_mut(&block_id)
+            .unwrap()
             .expressions
             .get_mut(&expression_id)
             .unwrap()
@@ -609,5 +752,176 @@ mod tests {
         assert_eq!(program.revision_id(), source_revision);
         assert!(program.function(function_id).is_none());
         assert!(program.validate_structure().is_ok());
+    }
+
+    // AR-CFG-046 and MNIR-CFG-004/-073/-074/-131. Corrupt entry state is
+    // reachable only from this private test support.
+    #[test]
+    fn corrupt_entry_reference_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let mut transaction = program.begin_transaction();
+        let module_id = transaction.add_module().unwrap();
+        let function_id = transaction
+            .add_function(module_id, IntrinsicType::Unit)
+            .unwrap();
+        let entry = transaction.create_function_body(function_id).unwrap();
+        let unit = transaction.add_unit_literal(entry).unwrap();
+        transaction.set_return(entry, unit).unwrap();
+        transaction.commit().unwrap();
+        let revision = program.revision_id();
+
+        let mut transaction = program.begin_transaction();
+        let missing_entry = BlockId(entry.0 + 10_000);
+        transaction
+            .working_modules_mut()
+            .get_mut(&module_id)
+            .unwrap()
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .entry_block_id = missing_entry;
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::EntryBlockNotInBody {
+                function_id,
+                entry_block_id: missing_entry,
+            })
+        );
+        drop(transaction);
+        assert_eq!(program.revision_id(), revision);
+        assert_eq!(
+            program
+                .function(function_id)
+                .unwrap()
+                .body()
+                .unwrap()
+                .block_id(),
+            entry
+        );
+    }
+
+    // AR-CFG-047 and MNIR-CFG-029/-030/-073/-074/-132.
+    #[test]
+    fn corrupt_branch_references_cannot_commit() {
+        fn program_with_branch() -> (
+            MnirProgram,
+            ModuleId,
+            FunctionId,
+            BlockId,
+            BlockId,
+            ExpressionId,
+        ) {
+            let mut program = MnirProgram::new().unwrap();
+            let mut transaction = program.begin_transaction();
+            let module = transaction.add_module().unwrap();
+            let function = transaction
+                .add_function(module, IntrinsicType::Unit)
+                .unwrap();
+            let entry = transaction.create_function_body(function).unwrap();
+            let target = transaction.add_block(function).unwrap();
+            let condition = transaction.add_bool_literal(entry, true).unwrap();
+            transaction
+                .set_branch(entry, condition, target, target)
+                .unwrap();
+            let unit = transaction.add_unit_literal(target).unwrap();
+            transaction.set_return(target, unit).unwrap();
+            transaction.commit().unwrap();
+            (program, module, function, entry, target, condition)
+        }
+
+        let (mut program, module, function, entry, target, condition) = program_with_branch();
+        let missing_expression = ExpressionId(condition.0 + 10_000);
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&function)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&entry)
+            .unwrap()
+            .terminator = Some(Terminator::Branch {
+            condition: missing_expression,
+            true_block: target,
+            false_block: target,
+        });
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::BranchConditionNotInBlock {
+                block_id: entry,
+                expression_id: missing_expression,
+            })
+        );
+
+        let (mut program, module, function, entry, _, condition) = program_with_branch();
+        let missing_target = BlockId(entry.0 + 10_000);
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&function)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&entry)
+            .unwrap()
+            .terminator = Some(Terminator::Branch {
+            condition,
+            true_block: missing_target,
+            false_block: missing_target,
+        });
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::BranchTargetNotInBody {
+                block_id: entry,
+                target_block_id: missing_target,
+            })
+        );
+
+        let (mut program, module, function, entry, target, condition) = program_with_branch();
+        let mut setup = program.begin_transaction();
+        let foreign_function = setup.add_function(module, IntrinsicType::Unit).unwrap();
+        let foreign_block = setup.create_function_body(foreign_function).unwrap();
+        let foreign_unit = setup.add_unit_literal(foreign_block).unwrap();
+        setup.set_return(foreign_block, foreign_unit).unwrap();
+        setup.commit().unwrap();
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&function)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&entry)
+            .unwrap()
+            .terminator = Some(Terminator::Branch {
+            condition,
+            true_block: foreign_block,
+            false_block: target,
+        });
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::BranchTargetNotInBody {
+                block_id: entry,
+                target_block_id: foreign_block,
+            })
+        );
     }
 }

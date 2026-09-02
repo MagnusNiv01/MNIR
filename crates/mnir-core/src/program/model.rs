@@ -306,13 +306,16 @@ impl ProgramSnapshot {
         let committed_block_ids = modules
             .values()
             .flat_map(|module| module.functions.values())
-            .filter_map(|function| function.body().map(FunctionBody::block_id))
+            .filter_map(Function::body)
+            .flat_map(FunctionBody::blocks)
+            .map(Block::id)
             .collect();
         let committed_expression_ids = modules
             .values()
             .flat_map(|module| module.functions.values())
             .filter_map(Function::body)
-            .flat_map(|body| body.block().expressions().map(Expression::id))
+            .flat_map(FunctionBody::blocks)
+            .flat_map(|block| block.expressions().map(Expression::id))
             .collect();
 
         Ok(MnirProgram {
@@ -532,7 +535,7 @@ pub(super) fn find_block(modules: &HashMap<ModuleId, Module>, id: BlockId) -> Op
         .values()
         .flat_map(|module| module.functions.values())
         .filter_map(Function::body)
-        .map(FunctionBody::block)
+        .flat_map(FunctionBody::blocks)
         .find(|block| block.id == id)
 }
 
@@ -544,7 +547,7 @@ pub(super) fn find_block_mut(
         .values_mut()
         .flat_map(|module| module.functions.values_mut())
         .filter_map(|function| function.body.as_mut())
-        .map(|body| &mut body.block)
+        .flat_map(|body| body.blocks.values_mut())
         .find(|block| block.id == id)
 }
 
@@ -555,7 +558,11 @@ pub(super) fn find_block_owner(
     modules
         .values()
         .flat_map(|module| module.functions.values())
-        .find(|function| function.body().is_some_and(|body| body.block_id() == id))
+        .find(|function| {
+            function
+                .body()
+                .is_some_and(|body| body.block_by_id(id).is_some())
+        })
 }
 
 pub(super) fn find_expression(
@@ -566,7 +573,8 @@ pub(super) fn find_expression(
         .values()
         .flat_map(|module| module.functions.values())
         .filter_map(Function::body)
-        .find_map(|body| body.block().expression(id))
+        .flat_map(FunctionBody::blocks)
+        .find_map(|block| block.expression(id))
 }
 
 pub(super) fn derive_expression_type(
@@ -577,8 +585,11 @@ pub(super) fn derive_expression_type(
         .values()
         .flat_map(|module| module.functions.values())
         .find_map(|function| {
-            let block = function.body()?.block();
-            block.expression(id).map(|_| (function, block))
+            let block = function
+                .body()?
+                .blocks()
+                .find(|block| block.expression(id).is_some())?;
+            Some((function, block))
         })?;
 
     Some(derive_expression_type_in_block(

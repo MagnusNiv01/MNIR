@@ -21,6 +21,15 @@ pub enum StructuralError {
     DuplicateFunctionIdentity(FunctionId),
     ParameterIdentityNotCommitted(ParameterId),
     DuplicateParameterIdentity(ParameterId),
+    FunctionBodyHasNoBlocks(FunctionId),
+    EntryBlockNotInBody {
+        function_id: FunctionId,
+        entry_block_id: BlockId,
+    },
+    BlockIdentityMismatch {
+        collection_id: BlockId,
+        block_id: BlockId,
+    },
     BlockIdentityNotCommitted(BlockId),
     DuplicateBlockIdentity(BlockId),
     ExpressionIdentityMismatch {
@@ -34,6 +43,19 @@ pub enum StructuralError {
         block_id: BlockId,
         expression_id: ExpressionId,
     },
+    BranchConditionNotInBlock {
+        block_id: BlockId,
+        expression_id: ExpressionId,
+    },
+    BranchTargetNotInBody {
+        block_id: BlockId,
+        target_block_id: BlockId,
+    },
+    UnreachableBlock {
+        function_id: FunctionId,
+        block_id: BlockId,
+    },
+    CyclicControlFlow(FunctionId),
     DanglingParameterReference {
         expression_id: ExpressionId,
         parameter_id: ParameterId,
@@ -93,6 +115,23 @@ impl fmt::Display for StructuralError {
             Self::DuplicateParameterIdentity(id) => {
                 write!(formatter, "parameter identity {id:?} occurs more than once")
             }
+            Self::FunctionBodyHasNoBlocks(id) => {
+                write!(formatter, "function {id:?} has a body with no Blocks")
+            }
+            Self::EntryBlockNotInBody {
+                function_id,
+                entry_block_id,
+            } => write!(
+                formatter,
+                "entry block {entry_block_id:?} is not owned by function {function_id:?}"
+            ),
+            Self::BlockIdentityMismatch {
+                collection_id,
+                block_id,
+            } => write!(
+                formatter,
+                "block collection identity {collection_id:?} does not match contained identity {block_id:?}"
+            ),
             Self::BlockIdentityNotCommitted(id) => {
                 write!(
                     formatter,
@@ -129,6 +168,30 @@ impl fmt::Display for StructuralError {
                 formatter,
                 "Return expression {expression_id:?} is not owned by block {block_id:?}"
             ),
+            Self::BranchConditionNotInBlock {
+                block_id,
+                expression_id,
+            } => write!(
+                formatter,
+                "Branch condition {expression_id:?} is not owned by block {block_id:?}"
+            ),
+            Self::BranchTargetNotInBody {
+                block_id,
+                target_block_id,
+            } => write!(
+                formatter,
+                "Branch target {target_block_id:?} is not in the Function body containing block {block_id:?}"
+            ),
+            Self::UnreachableBlock {
+                function_id,
+                block_id,
+            } => write!(
+                formatter,
+                "block {block_id:?} is unreachable from the entry of function {function_id:?}"
+            ),
+            Self::CyclicControlFlow(function_id) => {
+                write!(formatter, "function {function_id:?} contains a cyclic CFG")
+            }
             Self::DanglingParameterReference {
                 expression_id,
                 parameter_id,
@@ -184,6 +247,7 @@ pub enum MutationError {
     UnknownExpression(ExpressionId),
     FunctionBodyAlreadyExists(FunctionId),
     FunctionBodyAbsent(FunctionId),
+    EntryBlockCannotBeRemoved(BlockId),
     ParameterNotOwnedByFunction {
         parameter_id: ParameterId,
         function_id: FunctionId,
@@ -191,6 +255,10 @@ pub enum MutationError {
     ExpressionNotOwnedByBlock {
         expression_id: ExpressionId,
         block_id: BlockId,
+    },
+    BlockNotOwnedByFunctionBody {
+        block_id: BlockId,
+        function_id: FunctionId,
     },
     SourceRevisionChanged {
         expected: RevisionId,
@@ -219,6 +287,12 @@ impl fmt::Display for MutationError {
             Self::FunctionBodyAbsent(id) => {
                 write!(formatter, "function has no body: {id:?}")
             }
+            Self::EntryBlockCannotBeRemoved(id) => {
+                write!(
+                    formatter,
+                    "entry block cannot be removed individually: {id:?}"
+                )
+            }
             Self::ParameterNotOwnedByFunction {
                 parameter_id,
                 function_id,
@@ -232,6 +306,13 @@ impl fmt::Display for MutationError {
             } => write!(
                 formatter,
                 "expression {expression_id:?} is not owned by block {block_id:?}"
+            ),
+            Self::BlockNotOwnedByFunctionBody {
+                block_id,
+                function_id,
+            } => write!(
+                formatter,
+                "block {block_id:?} is not owned by function {function_id:?}"
             ),
             Self::SourceRevisionChanged { expected, actual } => write!(
                 formatter,

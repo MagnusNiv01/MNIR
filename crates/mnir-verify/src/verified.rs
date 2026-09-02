@@ -5,6 +5,7 @@ use mnir_core::{ProgramId, ProgramSnapshot, RevisionId};
 pub enum VerificationRuleSet {
     SemanticVerificationAndDiagnosticsV0_1,
     SemanticVerificationAndDiagnosticsV0_2,
+    SemanticVerificationAndDiagnosticsV0_3,
 }
 
 impl VerificationRuleSet {
@@ -16,6 +17,9 @@ impl VerificationRuleSet {
             }
             Self::SemanticVerificationAndDiagnosticsV0_2 => {
                 "MNIR Semantic Verification and Diagnostics 0.2"
+            }
+            Self::SemanticVerificationAndDiagnosticsV0_3 => {
+                "MNIR Semantic Verification and Diagnostics 0.3"
             }
         }
     }
