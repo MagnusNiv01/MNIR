@@ -513,6 +513,73 @@ impl MutationTransaction<'_> {
         })
     }
 
+    pub fn add_equal_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_comparison_expression(block_id, left, right, |left, right| ExpressionKind::Equal {
+            left,
+            right,
+        })
+    }
+
+    pub fn add_not_equal_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_comparison_expression(block_id, left, right, |left, right| {
+            ExpressionKind::NotEqual { left, right }
+        })
+    }
+
+    pub fn add_less_than_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_comparison_expression(block_id, left, right, |left, right| {
+            ExpressionKind::LessThan { left, right }
+        })
+    }
+
+    pub fn add_less_than_or_equal_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_comparison_expression(block_id, left, right, |left, right| {
+            ExpressionKind::LessThanOrEqual { left, right }
+        })
+    }
+
+    pub fn add_greater_than_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_comparison_expression(block_id, left, right, |left, right| {
+            ExpressionKind::GreaterThan { left, right }
+        })
+    }
+
+    pub fn add_greater_than_or_equal_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_comparison_expression(block_id, left, right, |left, right| {
+            ExpressionKind::GreaterThanOrEqual { left, right }
+        })
+    }
+
     pub fn set_return(
         &mut self,
         block_id: BlockId,
@@ -660,6 +727,38 @@ impl MutationTransaction<'_> {
         // Validate both pre-existing operand identities before allocating the
         // new Expression. Together with immutability, this makes safe cycle
         // construction impossible (`MNIR-ARITH-011` through `MNIR-ARITH-015`).
+        self.require_active()?;
+
+        let Some(block) = find_block(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        for operand_id in [left, right] {
+            if block.expression(operand_id).is_none() {
+                let error = if find_expression(&self.working_modules, operand_id).is_some() {
+                    MutationError::ExpressionNotOwnedByBlock {
+                        expression_id: operand_id,
+                        block_id,
+                    }
+                } else {
+                    MutationError::UnknownExpression(operand_id)
+                };
+                return Err(self.fail(error));
+            }
+        }
+
+        self.add_expression(block_id, kind(left, right))
+    }
+
+    fn add_comparison_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+        kind: impl FnOnce(ExpressionId, ExpressionId) -> ExpressionKind,
+    ) -> Result<ExpressionId, MutationError> {
+        // Both operands must pre-exist in this Block. With immutable operands,
+        // safe construction therefore cannot create a cycle (`MNIR-CMP-016`
+        // through `MNIR-CMP-020`).
         self.require_active()?;
 
         let Some(block) = find_block(&self.working_modules, block_id) else {

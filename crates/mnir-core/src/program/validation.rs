@@ -111,6 +111,17 @@ pub(super) fn validate_modules(
                         }
                     }
                 }
+                if let Some((left, right)) = expression.kind.comparison_operands() {
+                    for operand_id in [left, right] {
+                        if !block.expressions.contains_key(&operand_id) {
+                            return Err(StructuralError::ComparisonOperandNotInBlock {
+                                expression_id: expression.id,
+                                operand_id,
+                                block_id: block.id,
+                            });
+                        }
+                    }
+                }
             }
 
             validate_acyclic_expression_dependencies(block)?;
@@ -132,14 +143,15 @@ pub(super) fn validate_modules(
 
 /// Uses Kahn's algorithm so structural validation does not depend on recursive
 /// call depth. Duplicate left/right operand edges are retained deliberately;
-/// `Add(E1, E1)` therefore decrements both dependencies without being mistaken
-/// for a cycle (`MNIR-ARITH-009`, `MNIR-ARITH-096`).
+/// `Add(E1, E1)` or `Equal(E1, E1)` therefore decrements both dependencies
+/// without being mistaken for a cycle (`MNIR-ARITH-009`, `MNIR-ARITH-096`,
+/// `MNIR-CMP-010`, `MNIR-CMP-014`, `MNIR-CMP-015`).
 fn validate_acyclic_expression_dependencies(block: &Block) -> Result<(), StructuralError> {
     let mut dependency_count = HashMap::with_capacity(block.expressions.len());
     let mut dependents: HashMap<ExpressionId, Vec<ExpressionId>> = HashMap::new();
 
     for expression in block.expressions.values() {
-        let Some((left, right)) = expression.kind.arithmetic_operands() else {
+        let Some((left, right)) = expression.kind.dependency_operands() else {
             dependency_count.insert(expression.id, 0_usize);
             continue;
         };
@@ -488,6 +500,105 @@ mod tests {
         assert_eq!(
             transaction.commit().unwrap_err(),
             MutationError::StructuralViolation(StructuralError::ArithmeticOperandNotInBlock {
+                expression_id,
+                operand_id: missing_operand,
+                block_id,
+            })
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        drop(transaction);
+        assert_eq!(program.revision_id(), source_revision);
+        assert!(program.function(function_id).is_none());
+        assert!(program.validate_structure().is_ok());
+    }
+
+    // AR-CMP-038 and MNIR-CMP-014/-015/-016/-061/-062. The public API cannot
+    // retarget either family; this private corruption verifies the shared
+    // dependency graph rejects a cross-family cycle atomically.
+    #[test]
+    fn cross_family_expression_cycle_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let source_revision = program.revision_id();
+        let mut transaction = program.begin_transaction();
+        let module_id = transaction.add_module().unwrap();
+        let function_id = transaction
+            .add_function(module_id, IntrinsicType::Bool)
+            .unwrap();
+        let block_id = transaction.create_function_body(function_id).unwrap();
+        let arithmetic = transaction.add_int32_literal(block_id, 1).unwrap();
+        let comparison = transaction.add_int32_literal(block_id, 2).unwrap();
+        transaction.set_return(block_id, comparison).unwrap();
+
+        let block = &mut transaction
+            .working_modules_mut()
+            .get_mut(&module_id)
+            .unwrap()
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .block;
+        block.expressions.get_mut(&arithmetic).unwrap().kind = ExpressionKind::Add {
+            left: comparison,
+            right: comparison,
+        };
+        block.expressions.get_mut(&comparison).unwrap().kind = ExpressionKind::Equal {
+            left: arithmetic,
+            right: arithmetic,
+        };
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::CyclicExpressionDependency(
+                block_id
+            ))
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        drop(transaction);
+        assert_eq!(program.revision_id(), source_revision);
+        assert!(program.function(function_id).is_none());
+        assert!(program.validate_structure().is_ok());
+    }
+
+    // MNIR-CMP-011/-012/-061/-062. Structural validation remains a defense
+    // even though controlled construction rejects missing operands.
+    #[test]
+    fn structurally_corrupt_comparison_operand_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let source_revision = program.revision_id();
+        let mut transaction = program.begin_transaction();
+        let module_id = transaction.add_module().unwrap();
+        let function_id = transaction
+            .add_function(module_id, IntrinsicType::Bool)
+            .unwrap();
+        let block_id = transaction.create_function_body(function_id).unwrap();
+        let expression_id = transaction.add_bool_literal(block_id, true).unwrap();
+        transaction.set_return(block_id, expression_id).unwrap();
+        let missing_operand = ExpressionId(expression_id.0 + 1_000);
+        transaction
+            .working_modules_mut()
+            .get_mut(&module_id)
+            .unwrap()
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .block
+            .expressions
+            .get_mut(&expression_id)
+            .unwrap()
+            .kind = ExpressionKind::Equal {
+            left: missing_operand,
+            right: expression_id,
+        };
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::ComparisonOperandNotInBlock {
                 expression_id,
                 operand_id: missing_operand,
                 block_id,

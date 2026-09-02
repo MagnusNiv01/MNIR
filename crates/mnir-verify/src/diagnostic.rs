@@ -2,13 +2,17 @@ use std::fmt;
 
 use mnir_core::{ExpressionId, FunctionId, IntrinsicType};
 
-/// Stable machine-readable diagnostic categories defined by version 0.1.
+/// Stable machine-readable diagnostic categories defined by verification rule
+/// sets V0_1 and V0_2.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticCode {
     ArithmeticOperandTypeUnavailable,
     ArithmeticOperandTypeMismatch,
     ArithmeticUnsupportedOperandType,
     ReturnTypeMismatch,
+    ComparisonOperandTypeUnavailable,
+    ComparisonOperandTypeMismatch,
+    ComparisonUnsupportedOperandType,
 }
 
 impl DiagnosticCode {
@@ -20,6 +24,9 @@ impl DiagnosticCode {
             Self::ArithmeticOperandTypeMismatch => "MNIR-DIAG-002",
             Self::ArithmeticUnsupportedOperandType => "MNIR-DIAG-003",
             Self::ReturnTypeMismatch => "MNIR-DIAG-004",
+            Self::ComparisonOperandTypeUnavailable => "MNIR-DIAG-005",
+            Self::ComparisonOperandTypeMismatch => "MNIR-DIAG-006",
+            Self::ComparisonUnsupportedOperandType => "MNIR-DIAG-007",
         }
     }
 }
@@ -30,7 +37,7 @@ impl fmt::Display for DiagnosticCode {
     }
 }
 
-/// The only diagnostic severity defined by version 0.1.
+/// The only diagnostic severity defined by V0_1 and V0_2.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticSeverity {
     Error,
@@ -67,6 +74,18 @@ pub enum Diagnostic {
         expected_type: IntrinsicType,
         actual_type: IntrinsicType,
     },
+    ComparisonOperandTypeUnavailable {
+        expression_id: ExpressionId,
+    },
+    ComparisonOperandTypeMismatch {
+        expression_id: ExpressionId,
+        left_type: IntrinsicType,
+        right_type: IntrinsicType,
+    },
+    ComparisonUnsupportedOperandType {
+        expression_id: ExpressionId,
+        operand_type: IntrinsicType,
+    },
 }
 
 impl Diagnostic {
@@ -84,10 +103,20 @@ impl Diagnostic {
                 DiagnosticCode::ArithmeticUnsupportedOperandType
             }
             Self::ReturnTypeMismatch { .. } => DiagnosticCode::ReturnTypeMismatch,
+            Self::ComparisonOperandTypeUnavailable { .. } => {
+                DiagnosticCode::ComparisonOperandTypeUnavailable
+            }
+            Self::ComparisonOperandTypeMismatch { .. } => {
+                DiagnosticCode::ComparisonOperandTypeMismatch
+            }
+            Self::ComparisonUnsupportedOperandType { .. } => {
+                DiagnosticCode::ComparisonUnsupportedOperandType
+            }
         }
     }
 
-    /// Every version 0.1 diagnostic has Error severity (`MNIR-VERIFY-020`).
+    /// Every currently defined diagnostic has Error severity
+    /// (`MNIR-VERIFY-020`, `MNIR-CMP-068`).
     #[must_use]
     pub const fn severity(&self) -> DiagnosticSeverity {
         DiagnosticSeverity::Error
@@ -99,7 +128,10 @@ impl Diagnostic {
         match self {
             Self::ArithmeticOperandTypeUnavailable { expression_id }
             | Self::ArithmeticOperandTypeMismatch { expression_id, .. }
-            | Self::ArithmeticUnsupportedOperandType { expression_id, .. } => {
+            | Self::ArithmeticUnsupportedOperandType { expression_id, .. }
+            | Self::ComparisonOperandTypeUnavailable { expression_id }
+            | Self::ComparisonOperandTypeMismatch { expression_id, .. }
+            | Self::ComparisonUnsupportedOperandType { expression_id, .. } => {
                 DiagnosticPrimarySubject::Expression(*expression_id)
             }
             Self::ReturnTypeMismatch { function_id, .. } => {

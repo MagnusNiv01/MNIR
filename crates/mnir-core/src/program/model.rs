@@ -629,6 +629,23 @@ fn derive_expression_type_in_block(
                 derive_expression_type_in_block(function, block, *right, memo, visiting);
             derive_arithmetic_type(id, left_type, right_type)
         }
+        Some(ExpressionKind::Equal { left, right } | ExpressionKind::NotEqual { left, right }) => {
+            let left_type = derive_expression_type_in_block(function, block, *left, memo, visiting);
+            let right_type =
+                derive_expression_type_in_block(function, block, *right, memo, visiting);
+            derive_comparison_type(id, left_type, right_type, false)
+        }
+        Some(
+            ExpressionKind::LessThan { left, right }
+            | ExpressionKind::LessThanOrEqual { left, right }
+            | ExpressionKind::GreaterThan { left, right }
+            | ExpressionKind::GreaterThanOrEqual { left, right },
+        ) => {
+            let left_type = derive_expression_type_in_block(function, block, *left, memo, visiting);
+            let right_type =
+                derive_expression_type_in_block(function, block, *right, memo, visiting);
+            derive_comparison_type(id, left_type, right_type, true)
+        }
     };
 
     visiting.remove(&id);
@@ -658,6 +675,30 @@ fn derive_arithmetic_type(
             Err(ExpressionTypeError::UnsupportedOperandType { expression_id })
         }
     }
+}
+
+fn derive_comparison_type(
+    expression_id: ExpressionId,
+    left: Result<IntrinsicType, ExpressionTypeError>,
+    right: Result<IntrinsicType, ExpressionTypeError>,
+    ordering: bool,
+) -> Result<IntrinsicType, ExpressionTypeError> {
+    // Comparison outcomes use the same deterministic precedence as arithmetic,
+    // but every supported comparison derives Bool (`MNIR-CMP-034` through
+    // `MNIR-CMP-041`).
+    let (Ok(left), Ok(right)) = (left, right) else {
+        return Err(ExpressionTypeError::OperandTypeUnavailable { expression_id });
+    };
+
+    if left != right {
+        return Err(ExpressionTypeError::OperandTypeMismatch { expression_id });
+    }
+
+    if ordering && matches!(left, IntrinsicType::Bool | IntrinsicType::Unit) {
+        return Err(ExpressionTypeError::UnsupportedOperandType { expression_id });
+    }
+
+    Ok(IntrinsicType::Bool)
 }
 
 fn copy_expression_type_result(

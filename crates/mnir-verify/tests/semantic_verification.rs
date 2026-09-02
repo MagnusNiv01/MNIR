@@ -16,6 +16,9 @@ fn semantic_failure(snapshot: &ProgramSnapshot) -> VerificationFailure {
         Err(VerificationError::StructuralInput(error)) => {
             panic!("test setup unexpectedly produced structural invalidity: {error}")
         }
+        Err(VerificationError::RuleSetNotApplicable { .. }) => {
+            panic!("V0_1 unexpectedly rejected a Program containing only V0_1 constructs")
+        }
         Ok(_) => panic!("test setup unexpectedly verified successfully"),
     }
 }

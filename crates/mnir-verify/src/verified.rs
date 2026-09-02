@@ -1,9 +1,10 @@
 use mnir_core::{ProgramId, ProgramSnapshot, RevisionId};
 
-/// Identity of the fixed semantic verification rule set implemented here.
+/// Identity of the fixed semantic verification rule sets implemented here.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum VerificationRuleSet {
     SemanticVerificationAndDiagnosticsV0_1,
+    SemanticVerificationAndDiagnosticsV0_2,
 }
 
 impl VerificationRuleSet {
@@ -13,11 +14,14 @@ impl VerificationRuleSet {
             Self::SemanticVerificationAndDiagnosticsV0_1 => {
                 "MNIR Semantic Verification and Diagnostics 0.1"
             }
+            Self::SemanticVerificationAndDiagnosticsV0_2 => {
+                "MNIR Semantic Verification and Diagnostics 0.2"
+            }
         }
     }
 }
 
-/// Immutable evidence that one exact Program revision passed version 0.1.
+/// Immutable evidence that one exact Program revision passed one rule set.
 ///
 /// Fields are private and no public constructor exists, so ordinary callers
 /// cannot manufacture verification evidence without [`crate::verify`]
@@ -40,11 +44,8 @@ pub struct VerifiedProgram {
 }
 
 impl VerifiedProgram {
-    pub(crate) const fn new(snapshot: ProgramSnapshot) -> Self {
-        Self {
-            snapshot,
-            rule_set: VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1,
-        }
+    pub(crate) const fn new(snapshot: ProgramSnapshot, rule_set: VerificationRuleSet) -> Self {
+        Self { snapshot, rule_set }
     }
 
     #[must_use]

@@ -4,9 +4,10 @@ use crate::ids::{BlockId, ExpressionId, ParameterId};
 
 /// The closed set of Expression alternatives currently defined by MNIR.
 ///
-/// Arithmetic operators extend the existing Expression model and retain
-/// operand position directly in their semantic data (`MNIR-ARITH-001` through
-/// `MNIR-ARITH-005`, `MNIR-ARITH-084`).
+/// Arithmetic and comparison operators extend the existing Expression model
+/// and retain operand position directly in their semantic data
+/// (`MNIR-ARITH-001` through `MNIR-ARITH-005`, `MNIR-CMP-005` through
+/// `MNIR-CMP-009`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExpressionKind {
     Int32Literal(i32),
@@ -34,6 +35,30 @@ pub enum ExpressionKind {
         left: ExpressionId,
         right: ExpressionId,
     },
+    Equal {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    NotEqual {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    LessThan {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    LessThanOrEqual {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    GreaterThan {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    GreaterThanOrEqual {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
 }
 
 impl ExpressionKind {
@@ -44,11 +69,45 @@ impl ExpressionKind {
             | Self::Multiply { left, right }
             | Self::Divide { left, right }
             | Self::Remainder { left, right } => Some((*left, *right)),
-            Self::Int32Literal(_)
+            Self::Equal { .. }
+            | Self::NotEqual { .. }
+            | Self::LessThan { .. }
+            | Self::LessThanOrEqual { .. }
+            | Self::GreaterThan { .. }
+            | Self::GreaterThanOrEqual { .. }
+            | Self::Int32Literal(_)
             | Self::Int64Literal(_)
             | Self::BoolLiteral(_)
             | Self::UnitLiteral
             | Self::ParameterReference(_) => None,
+        }
+    }
+
+    pub(super) const fn comparison_operands(&self) -> Option<(ExpressionId, ExpressionId)> {
+        match self {
+            Self::Equal { left, right }
+            | Self::NotEqual { left, right }
+            | Self::LessThan { left, right }
+            | Self::LessThanOrEqual { left, right }
+            | Self::GreaterThan { left, right }
+            | Self::GreaterThanOrEqual { left, right } => Some((*left, *right)),
+            Self::Int32Literal(_)
+            | Self::Int64Literal(_)
+            | Self::BoolLiteral(_)
+            | Self::UnitLiteral
+            | Self::ParameterReference(_)
+            | Self::Add { .. }
+            | Self::Subtract { .. }
+            | Self::Multiply { .. }
+            | Self::Divide { .. }
+            | Self::Remainder { .. } => None,
+        }
+    }
+
+    pub(super) const fn dependency_operands(&self) -> Option<(ExpressionId, ExpressionId)> {
+        match self.arithmetic_operands() {
+            Some(operands) => Some(operands),
+            None => self.comparison_operands(),
         }
     }
 }

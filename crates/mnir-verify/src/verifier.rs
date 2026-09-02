@@ -7,7 +7,7 @@ use mnir_core::{
 };
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPrimarySubject};
-use crate::verified::VerifiedProgram;
+use crate::verified::{VerificationRuleSet, VerifiedProgram};
 
 /// The complete semantic failure from one verification run.
 #[derive(Debug, Eq, PartialEq)]
@@ -49,10 +49,14 @@ impl fmt::Display for VerificationFailure {
 
 impl Error for VerificationFailure {}
 
-/// A typed distinction between invalid verification input and semantic failure.
+/// A typed distinction between invalid input, rule-set inapplicability, and
+/// semantic failure.
 #[derive(Debug, Eq, PartialEq)]
 pub enum VerificationError {
     StructuralInput(StructuralError),
+    RuleSetNotApplicable {
+        requested_rule_set: VerificationRuleSet,
+    },
     Semantic(VerificationFailure),
 }
 
@@ -62,6 +66,7 @@ impl VerificationError {
     pub fn diagnostics(&self) -> Option<&[Diagnostic]> {
         match self {
             Self::StructuralInput(_) => None,
+            Self::RuleSetNotApplicable { .. } => None,
             Self::Semantic(failure) => Some(failure.diagnostics()),
         }
     }
@@ -73,6 +78,11 @@ impl fmt::Display for VerificationError {
             Self::StructuralInput(error) => {
                 write!(formatter, "invalid verification input: {error}")
             }
+            Self::RuleSetNotApplicable { requested_rule_set } => write!(
+                formatter,
+                "verification rule set {} is not applicable to this Program revision",
+                requested_rule_set.as_str()
+            ),
             Self::Semantic(failure) => failure.fmt(formatter),
         }
     }
@@ -82,6 +92,7 @@ impl Error for VerificationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::StructuralInput(error) => Some(error),
+            Self::RuleSetNotApplicable { .. } => None,
             Self::Semantic(failure) => Some(failure),
         }
     }
@@ -89,9 +100,30 @@ impl Error for VerificationError {
 
 /// Verifies one immutable committed Program revision under the fixed 0.1 rule set.
 pub fn verify(snapshot: &ProgramSnapshot) -> Result<VerifiedProgram, VerificationError> {
+    verify_with_rule_set(
+        snapshot,
+        VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1,
+    )
+}
+
+/// Verifies one immutable revision under an explicitly selected rule set.
+pub fn verify_with_rule_set(
+    snapshot: &ProgramSnapshot,
+    rule_set: VerificationRuleSet,
+) -> Result<VerifiedProgram, VerificationError> {
     snapshot
         .validate_structure()
         .map_err(VerificationError::StructuralInput)?;
+
+    // Applicability is scanned across the complete revision before any V0_1
+    // semantic check can produce a result (`MNIR-CMP-101` through -105).
+    if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1
+        && contains_comparison_expression(snapshot)
+    {
+        return Err(VerificationError::RuleSetNotApplicable {
+            requested_rule_set: rule_set,
+        });
+    }
 
     let mut diagnostics = Vec::new();
     let mut seen = HashSet::new();
@@ -100,12 +132,12 @@ pub fn verify(snapshot: &ProgramSnapshot) -> Result<VerifiedProgram, Verificatio
     // inspection (`MNIR-VERIFY-027`, -037, -055, -067, -087 through -089).
     for module in snapshot.modules() {
         for function in module.functions() {
-            verify_function(function, &mut diagnostics, &mut seen);
+            verify_function(function, rule_set, &mut diagnostics, &mut seen);
         }
     }
 
     if diagnostics.is_empty() {
-        Ok(VerifiedProgram::new(snapshot.clone()))
+        Ok(VerifiedProgram::new(snapshot.clone(), rule_set))
     } else {
         Err(VerificationError::Semantic(VerificationFailure {
             diagnostics,
@@ -113,8 +145,21 @@ pub fn verify(snapshot: &ProgramSnapshot) -> Result<VerifiedProgram, Verificatio
     }
 }
 
+fn contains_comparison_expression(snapshot: &ProgramSnapshot) -> bool {
+    snapshot.modules().any(|module| {
+        module.functions().any(|function| {
+            function.body().is_some_and(|body| {
+                body.block()
+                    .expressions()
+                    .any(|expression| comparison_operands(expression.kind()).is_some())
+            })
+        })
+    })
+}
+
 fn verify_function(
     function: &Function,
+    rule_set: VerificationRuleSet,
     diagnostics: &mut Vec<Diagnostic>,
     seen: &mut HashSet<(DiagnosticCode, DiagnosticPrimarySubject)>,
 ) {
@@ -125,30 +170,53 @@ fn verify_function(
     let mut memo = HashMap::new();
 
     for expression in block.expressions() {
-        if arithmetic_operands(expression.kind()).is_none() {
-            continue;
-        }
-
         let inspection = inspect_expression(function, block, expression.id(), &mut memo);
-        let diagnostic = match inspection {
-            TypeInspection::Valid(_) => None,
-            TypeInspection::Unavailable => Some(Diagnostic::ArithmeticOperandTypeUnavailable {
-                expression_id: expression.id(),
-            }),
-            TypeInspection::Mismatch {
-                left_type,
-                right_type,
-            } => Some(Diagnostic::ArithmeticOperandTypeMismatch {
-                expression_id: expression.id(),
-                left_type,
-                right_type,
-            }),
-            TypeInspection::Unsupported(operand_type) => {
-                Some(Diagnostic::ArithmeticUnsupportedOperandType {
+        let diagnostic = if arithmetic_operands(expression.kind()).is_some() {
+            match inspection {
+                TypeInspection::Valid(_) => None,
+                TypeInspection::Unavailable => Some(Diagnostic::ArithmeticOperandTypeUnavailable {
                     expression_id: expression.id(),
-                    operand_type,
-                })
+                }),
+                TypeInspection::Mismatch {
+                    left_type,
+                    right_type,
+                } => Some(Diagnostic::ArithmeticOperandTypeMismatch {
+                    expression_id: expression.id(),
+                    left_type,
+                    right_type,
+                }),
+                TypeInspection::Unsupported(operand_type) => {
+                    Some(Diagnostic::ArithmeticUnsupportedOperandType {
+                        expression_id: expression.id(),
+                        operand_type,
+                    })
+                }
             }
+        } else if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_2
+            && comparison_operands(expression.kind()).is_some()
+        {
+            match inspection {
+                TypeInspection::Valid(_) => None,
+                TypeInspection::Unavailable => Some(Diagnostic::ComparisonOperandTypeUnavailable {
+                    expression_id: expression.id(),
+                }),
+                TypeInspection::Mismatch {
+                    left_type,
+                    right_type,
+                } => Some(Diagnostic::ComparisonOperandTypeMismatch {
+                    expression_id: expression.id(),
+                    left_type,
+                    right_type,
+                }),
+                TypeInspection::Unsupported(operand_type) => {
+                    Some(Diagnostic::ComparisonUnsupportedOperandType {
+                        expression_id: expression.id(),
+                        operand_type,
+                    })
+                }
+            }
+        } else {
+            None
         };
         if let Some(diagnostic) = diagnostic {
             collect(diagnostic, diagnostics, seen);
@@ -161,8 +229,9 @@ fn verify_function(
     let TypeInspection::Valid(actual_type) =
         inspect_expression(function, block, return_expression_id, &mut memo)
     else {
-        // The applicable arithmetic diagnostic is emitted above. Version 0.1
-        // deliberately has no ReturnTypeUnavailable diagnostic (-041).
+        // The applicable operand diagnostic is emitted above. Neither rule set
+        // defines a ReturnTypeUnavailable diagnostic (`MNIR-VERIFY-041`,
+        // `MNIR-CMP-079`).
         return;
     };
 
@@ -243,13 +312,31 @@ fn inspect_expression(
             .parameter(*parameter_id)
             .map(|parameter| TypeInspection::Valid(copy_intrinsic_type(parameter.intrinsic_type())))
             .unwrap_or(TypeInspection::Unavailable),
-        Some(kind) => {
-            let Some((left_id, right_id)) = arithmetic_operands(kind) else {
-                return TypeInspection::Unavailable;
-            };
-            let left = inspect_expression(function, block, left_id, memo);
-            let right = inspect_expression(function, block, right_id, memo);
+        Some(
+            ExpressionKind::Add { left, right }
+            | ExpressionKind::Subtract { left, right }
+            | ExpressionKind::Multiply { left, right }
+            | ExpressionKind::Divide { left, right }
+            | ExpressionKind::Remainder { left, right },
+        ) => {
+            let left = inspect_expression(function, block, *left, memo);
+            let right = inspect_expression(function, block, *right, memo);
             inspect_arithmetic(left, right)
+        }
+        Some(ExpressionKind::Equal { left, right } | ExpressionKind::NotEqual { left, right }) => {
+            let left = inspect_expression(function, block, *left, memo);
+            let right = inspect_expression(function, block, *right, memo);
+            inspect_comparison(left, right, false)
+        }
+        Some(
+            ExpressionKind::LessThan { left, right }
+            | ExpressionKind::LessThanOrEqual { left, right }
+            | ExpressionKind::GreaterThan { left, right }
+            | ExpressionKind::GreaterThanOrEqual { left, right },
+        ) => {
+            let left = inspect_expression(function, block, *left, memo);
+            let right = inspect_expression(function, block, *right, memo);
+            inspect_comparison(left, right, true)
         }
         None => TypeInspection::Unavailable,
     };
@@ -279,6 +366,34 @@ fn inspect_arithmetic(left: TypeInspection, right: TypeInspection) -> TypeInspec
     }
 }
 
+fn inspect_comparison(
+    left: TypeInspection,
+    right: TypeInspection,
+    ordering: bool,
+) -> TypeInspection {
+    let (TypeInspection::Valid(left_type), TypeInspection::Valid(right_type)) = (left, right)
+    else {
+        return TypeInspection::Unavailable;
+    };
+
+    if left_type != right_type {
+        return TypeInspection::Mismatch {
+            left_type,
+            right_type,
+        };
+    }
+
+    if ordering {
+        match left_type {
+            IntrinsicType::Int32 | IntrinsicType::Int64 => {}
+            IntrinsicType::Bool => return TypeInspection::Unsupported(IntrinsicType::Bool),
+            IntrinsicType::Unit => return TypeInspection::Unsupported(IntrinsicType::Unit),
+        }
+    }
+
+    TypeInspection::Valid(IntrinsicType::Bool)
+}
+
 fn arithmetic_operands(kind: &ExpressionKind) -> Option<(ExpressionId, ExpressionId)> {
     match kind {
         ExpressionKind::Add { left, right }
@@ -286,11 +401,38 @@ fn arithmetic_operands(kind: &ExpressionKind) -> Option<(ExpressionId, Expressio
         | ExpressionKind::Multiply { left, right }
         | ExpressionKind::Divide { left, right }
         | ExpressionKind::Remainder { left, right } => Some((*left, *right)),
-        ExpressionKind::Int32Literal(_)
+        ExpressionKind::Equal { .. }
+        | ExpressionKind::NotEqual { .. }
+        | ExpressionKind::LessThan { .. }
+        | ExpressionKind::LessThanOrEqual { .. }
+        | ExpressionKind::GreaterThan { .. }
+        | ExpressionKind::GreaterThanOrEqual { .. }
+        | ExpressionKind::Int32Literal(_)
         | ExpressionKind::Int64Literal(_)
         | ExpressionKind::BoolLiteral(_)
         | ExpressionKind::UnitLiteral
         | ExpressionKind::ParameterReference(_) => None,
+    }
+}
+
+fn comparison_operands(kind: &ExpressionKind) -> Option<(ExpressionId, ExpressionId)> {
+    match kind {
+        ExpressionKind::Equal { left, right }
+        | ExpressionKind::NotEqual { left, right }
+        | ExpressionKind::LessThan { left, right }
+        | ExpressionKind::LessThanOrEqual { left, right }
+        | ExpressionKind::GreaterThan { left, right }
+        | ExpressionKind::GreaterThanOrEqual { left, right } => Some((*left, *right)),
+        ExpressionKind::Int32Literal(_)
+        | ExpressionKind::Int64Literal(_)
+        | ExpressionKind::BoolLiteral(_)
+        | ExpressionKind::UnitLiteral
+        | ExpressionKind::ParameterReference(_)
+        | ExpressionKind::Add { .. }
+        | ExpressionKind::Subtract { .. }
+        | ExpressionKind::Multiply { .. }
+        | ExpressionKind::Divide { .. }
+        | ExpressionKind::Remainder { .. } => None,
     }
 }
 

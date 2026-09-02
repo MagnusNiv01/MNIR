@@ -44,6 +44,11 @@ pub enum StructuralError {
         operand_id: ExpressionId,
         block_id: BlockId,
     },
+    ComparisonOperandNotInBlock {
+        expression_id: ExpressionId,
+        operand_id: ExpressionId,
+        block_id: BlockId,
+    },
     CyclicExpressionDependency(BlockId),
 }
 
@@ -139,6 +144,14 @@ impl fmt::Display for StructuralError {
             } => write!(
                 formatter,
                 "arithmetic expression {expression_id:?} refers to operand {operand_id:?} not owned by block {block_id:?}"
+            ),
+            Self::ComparisonOperandNotInBlock {
+                expression_id,
+                operand_id,
+                block_id,
+            } => write!(
+                formatter,
+                "comparison expression {expression_id:?} refers to operand {operand_id:?} not owned by block {block_id:?}"
             ),
             Self::CyclicExpressionDependency(block_id) => write!(
                 formatter,
@@ -262,15 +275,15 @@ impl fmt::Display for ExpressionTypeError {
             ),
             Self::OperandTypeUnavailable { expression_id } => write!(
                 formatter,
-                "cannot derive type of arithmetic expression {expression_id:?}: an operand type is unavailable"
+                "cannot derive type of expression {expression_id:?}: an operand type is unavailable"
             ),
             Self::OperandTypeMismatch { expression_id } => write!(
                 formatter,
-                "cannot derive type of arithmetic expression {expression_id:?}: operand types differ"
+                "cannot derive type of expression {expression_id:?}: operand types differ"
             ),
             Self::UnsupportedOperandType { expression_id } => write!(
                 formatter,
-                "cannot derive type of arithmetic expression {expression_id:?}: the common operand type is unsupported"
+                "cannot derive type of expression {expression_id:?}: the common operand type is unsupported"
             ),
         }
     }
