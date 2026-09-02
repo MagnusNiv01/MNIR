@@ -46,6 +46,7 @@ The release is a conformance and architecture milestone, not a production-ready 
 - render human-readable EasyH and parse it back into MNIR;
 - support semantic round-trip;
 - support AI-oriented semantic mutation;
+- demonstrate reuse of semantic capabilities through an initial package/dependency workflow;
 - provide an initial semantic diff.
 
 Detailed behavior for planned capabilities will be established by future normative specifications before implementation.
@@ -60,6 +61,7 @@ Completed specification increments:
 - Expressions and Basic Function Bodies 0.1
 - Arithmetic Expressions 0.1
 - Semantic Verification and Diagnostics 0.1
+- Comparison Expressions 0.1
 
 Together they establish:
 
@@ -69,6 +71,7 @@ Together they establish:
 - intrinsic types and Function signatures;
 - Function bodies and Expressions;
 - arithmetic;
+- comparison Expressions;
 - structural validity;
 - semantic verification and machine-readable diagnostics;
 - revision-bound `VerifiedProgram` evidence.
@@ -77,10 +80,9 @@ Together they establish:
 
 Planned sequence:
 
-1. Comparison Expressions
-2. Conditional Control Flow and an initial control-flow graph
-3. Local Values and Bindings
-4. Function Calls
+1. Conditional Control Flow and an initial control-flow graph
+2. Local Values and Bindings
+3. Function Calls
 
 The milestone is the ability to represent non-trivial multi-Function logic with conditions and local computation.
 
@@ -221,7 +223,28 @@ Git
 
 Serialized MNIR is intended to become the canonical persisted program representation. EasyH is a human interface, not the source of truth.
 
-## H. AI and Tooling Interface
+## H. Package and Dependency System
+
+Package reuse is part of the desired MNIR architecture. A future package and dependency system is planned around concepts such as:
+
+- Package identity;
+- Package manifests;
+- Module exports;
+- semantic dependencies;
+- version constraints;
+- dependency resolution and locking;
+- package integrity;
+- local and Git package sources;
+- package and capability discovery;
+- a future registry protocol.
+
+Package artifacts are intended to depend on canonical MNIR serialization rather than introduce another canonical program representation. Imported contents should ultimately resolve to stable semantic identities rather than remain string-based source references.
+
+MNIR 0.1.0 does not require a complete public package registry. A minimal local/Git-based dependency workflow may be sufficient to prove package identity, reusable semantic references, resolution, locking, integrity, and the overall architecture. The exact scope remains subject to future normative specification.
+
+See the informative [package ecosystem vision](PACKAGE-ECOSYSTEM.md) for the broader design direction.
+
+## I. AI and Tooling Interface
 
 An explicit semantic mutation interface is planned for AI systems and other tools. Conceptual operations may include:
 
@@ -251,7 +274,9 @@ commit
 
 AI tooling should not need to generate EasyH source to create or modify an MNIR program.
 
-## I. Semantic Diff
+The broader discovery, introspection, verification-feedback, and package-first workflow is described in the informative [AI semantic authoring vision](AI-SEMANTIC-AUTHORING.md).
+
+## J. Semantic Diff
 
 An initial semantic diff capability is planned, conceptually:
 
@@ -270,7 +295,7 @@ The goal is to describe changes through stable semantic identities rather than o
 
 The exact CLI and output format remain undefined.
 
-## J. EasyH Human Interface
+## K. EasyH Human Interface
 
 Planned sequence:
 
@@ -309,7 +334,7 @@ semantic_equivalent(MNIR, MNIR') == true
 
 Textual identity is not required.
 
-## K. MNIR 0.1.0 Conformance Demo
+## L. MNIR 0.1.0 Conformance Demo
 
 The integrated milestone is an end-to-end demonstration of:
 
@@ -346,7 +371,8 @@ The demo will use a small but meaningful program exercising several core ideas:
 - security classification;
 - effects;
 - contracts;
-- at least one policy or pattern.
+- at least one policy or pattern;
+- at least one reused local or Git package capability, if included by the eventual 0.1.0 package specification.
 
 The exact demo application will be chosen later.
 
@@ -361,7 +387,7 @@ The following capabilities may be considered in later releases but are not requi
 - optimizer;
 - async/await;
 - threads and advanced concurrency;
-- package manager;
+- complete public package registry or production-grade package manager;
 - LSP or IDE integration;
 - debugger;
 - garbage collector;
@@ -386,7 +412,7 @@ This release boundary does not imply that these capabilities will never be devel
 | Expressions and Basic Function Bodies | Done |
 | Arithmetic Expressions | Done |
 | Semantic Verification and Diagnostics | Done |
-| Comparison Expressions | Next |
+| Comparison Expressions | Done |
 | Conditional Control Flow | Planned |
 | Local Values / Bindings | Planned |
 | Function Calls | Planned |
@@ -396,6 +422,7 @@ This release boundary does not imply that these capabilities will never be devel
 | Contracts | Planned |
 | Policies / Profiles / Patterns | Planned |
 | Canonical Serialization | Planned |
+| Package and Dependency System | Planned |
 | Semantic Mutation API | Planned |
 | Semantic Diff | Planned |
 | EasyH Renderer | Planned |
