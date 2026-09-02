@@ -564,29 +564,100 @@ pub(super) fn derive_expression_type(
     modules: &HashMap<ModuleId, Module>,
     id: ExpressionId,
 ) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
-    let (function, expression) = modules
+    let (function, block) = modules
         .values()
         .flat_map(|module| module.functions.values())
         .find_map(|function| {
-            function
-                .body()
-                .and_then(|body| body.block().expression(id))
-                .map(|expression| (function, expression))
+            let block = function.body()?.block();
+            block.expression(id).map(|_| (function, block))
         })?;
 
-    Some(match expression.kind {
-        ExpressionKind::Int32Literal(_) => Ok(IntrinsicType::Int32),
-        ExpressionKind::Int64Literal(_) => Ok(IntrinsicType::Int64),
-        ExpressionKind::BoolLiteral(_) => Ok(IntrinsicType::Bool),
-        ExpressionKind::UnitLiteral => Ok(IntrinsicType::Unit),
-        ExpressionKind::ParameterReference(parameter_id) => function
-            .parameter(parameter_id)
+    Some(derive_expression_type_in_block(
+        function,
+        block,
+        id,
+        &mut HashMap::new(),
+        &mut HashSet::new(),
+    ))
+}
+
+fn derive_expression_type_in_block(
+    function: &Function,
+    block: &Block,
+    id: ExpressionId,
+    memo: &mut HashMap<ExpressionId, Result<IntrinsicType, ExpressionTypeError>>,
+    visiting: &mut HashSet<ExpressionId>,
+) -> Result<IntrinsicType, ExpressionTypeError> {
+    if let Some(result) = memo.get(&id) {
+        return copy_expression_type_result(result);
+    }
+    if !visiting.insert(id) {
+        return Err(ExpressionTypeError::OperandTypeUnavailable { expression_id: id });
+    }
+
+    let result = match block.expression(id).map(Expression::kind) {
+        None => Err(ExpressionTypeError::OperandTypeUnavailable { expression_id: id }),
+        Some(ExpressionKind::Int32Literal(_)) => Ok(IntrinsicType::Int32),
+        Some(ExpressionKind::Int64Literal(_)) => Ok(IntrinsicType::Int64),
+        Some(ExpressionKind::BoolLiteral(_)) => Ok(IntrinsicType::Bool),
+        Some(ExpressionKind::UnitLiteral) => Ok(IntrinsicType::Unit),
+        Some(ExpressionKind::ParameterReference(parameter_id)) => function
+            .parameter(*parameter_id)
             .map(|parameter| parameter.intrinsic_type.copied())
             .ok_or(ExpressionTypeError::UnresolvedParameter {
                 expression_id: id,
-                parameter_id,
+                parameter_id: *parameter_id,
             }),
-    })
+        Some(
+            ExpressionKind::Add { left, right }
+            | ExpressionKind::Subtract { left, right }
+            | ExpressionKind::Multiply { left, right }
+            | ExpressionKind::Divide { left, right }
+            | ExpressionKind::Remainder { left, right },
+        ) => {
+            let left_type = derive_expression_type_in_block(function, block, *left, memo, visiting);
+            let right_type =
+                derive_expression_type_in_block(function, block, *right, memo, visiting);
+            derive_arithmetic_type(id, left_type, right_type)
+        }
+    };
+
+    visiting.remove(&id);
+    memo.insert(id, copy_expression_type_result(&result));
+    result
+}
+
+fn derive_arithmetic_type(
+    expression_id: ExpressionId,
+    left: Result<IntrinsicType, ExpressionTypeError>,
+    right: Result<IntrinsicType, ExpressionTypeError>,
+) -> Result<IntrinsicType, ExpressionTypeError> {
+    // The outcome order is semantic and is independent of which operand was
+    // inspected first (`MNIR-ARITH-090` through `MNIR-ARITH-095`).
+    let (Ok(left), Ok(right)) = (left, right) else {
+        return Err(ExpressionTypeError::OperandTypeUnavailable { expression_id });
+    };
+
+    if left != right {
+        return Err(ExpressionTypeError::OperandTypeMismatch { expression_id });
+    }
+
+    match left {
+        IntrinsicType::Int32 => Ok(IntrinsicType::Int32),
+        IntrinsicType::Int64 => Ok(IntrinsicType::Int64),
+        IntrinsicType::Bool | IntrinsicType::Unit => {
+            Err(ExpressionTypeError::UnsupportedOperandType { expression_id })
+        }
+    }
+}
+
+fn copy_expression_type_result(
+    result: &Result<IntrinsicType, ExpressionTypeError>,
+) -> Result<IntrinsicType, ExpressionTypeError> {
+    match result {
+        Ok(intrinsic_type) => Ok(intrinsic_type.copied()),
+        Err(error) => Err(*error),
+    }
 }
 
 fn allocate_program_id() -> Result<ProgramId, MutationError> {

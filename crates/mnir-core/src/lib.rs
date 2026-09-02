@@ -2,7 +2,7 @@
 
 //! Canonical data model for MNIR Program Model 0.1, Type System Foundations
 //! 0.1, Functions and Parameters 0.1, and Expressions and Basic Function
-//! Bodies 0.1.
+//! Bodies 0.1, and Arithmetic Expressions 0.1.
 //!
 //! This crate implements the Program, Module, identity, revision, presentation
 //! metadata, snapshot, fork, and controlled mutation concepts defined by
@@ -11,11 +11,13 @@
 //! signatures with ordered Parameters defined by
 //! `docs/specification/03-functions-and-parameters.md`, and the minimal body,
 //! Block, Expression, and Return model defined by
-//! `docs/specification/04-expressions-and-basic-function-bodies.md`.
+//! `docs/specification/04-expressions-and-basic-function-bodies.md`, extended
+//! with arithmetic operators and dependency/type rules from
+//! `docs/specification/05-arithmetic-expressions.md`.
 //!
 //! It intentionally contains no semantic verifier, EasyH support, general
-//! type abstraction, arithmetic, control flow beyond Return, invocation,
-//! serialization, or execution model.
+//! type abstraction, arithmetic evaluation, control flow beyond Return,
+//! invocation, serialization, or execution model.
 
 mod ids;
 mod intrinsic;

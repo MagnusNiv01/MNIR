@@ -39,6 +39,12 @@ pub enum StructuralError {
         parameter_id: ParameterId,
         function_id: FunctionId,
     },
+    ArithmeticOperandNotInBlock {
+        expression_id: ExpressionId,
+        operand_id: ExpressionId,
+        block_id: BlockId,
+    },
+    CyclicExpressionDependency(BlockId),
 }
 
 impl fmt::Display for StructuralError {
@@ -125,6 +131,18 @@ impl fmt::Display for StructuralError {
             } => write!(
                 formatter,
                 "expression {expression_id:?} refers to parameter {parameter_id:?} not owned by function {function_id:?}"
+            ),
+            Self::ArithmeticOperandNotInBlock {
+                expression_id,
+                operand_id,
+                block_id,
+            } => write!(
+                formatter,
+                "arithmetic expression {expression_id:?} refers to operand {operand_id:?} not owned by block {block_id:?}"
+            ),
+            Self::CyclicExpressionDependency(block_id) => write!(
+                formatter,
+                "block {block_id:?} contains a cyclic Expression dependency"
             ),
         }
     }
@@ -221,6 +239,15 @@ pub enum ExpressionTypeError {
         expression_id: ExpressionId,
         parameter_id: ParameterId,
     },
+    OperandTypeUnavailable {
+        expression_id: ExpressionId,
+    },
+    OperandTypeMismatch {
+        expression_id: ExpressionId,
+    },
+    UnsupportedOperandType {
+        expression_id: ExpressionId,
+    },
 }
 
 impl fmt::Display for ExpressionTypeError {
@@ -232,6 +259,18 @@ impl fmt::Display for ExpressionTypeError {
             } => write!(
                 formatter,
                 "cannot derive type of expression {expression_id:?}: parameter {parameter_id:?} does not resolve"
+            ),
+            Self::OperandTypeUnavailable { expression_id } => write!(
+                formatter,
+                "cannot derive type of arithmetic expression {expression_id:?}: an operand type is unavailable"
+            ),
+            Self::OperandTypeMismatch { expression_id } => write!(
+                formatter,
+                "cannot derive type of arithmetic expression {expression_id:?}: operand types differ"
+            ),
+            Self::UnsupportedOperandType { expression_id } => write!(
+                formatter,
+                "cannot derive type of arithmetic expression {expression_id:?}: the common operand type is unsupported"
             ),
         }
     }

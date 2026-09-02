@@ -457,6 +457,62 @@ impl MutationTransaction<'_> {
         self.add_expression(block_id, ExpressionKind::ParameterReference(parameter_id))
     }
 
+    pub fn add_add_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_arithmetic_expression(block_id, left, right, |left, right| ExpressionKind::Add {
+            left,
+            right,
+        })
+    }
+
+    pub fn add_subtract_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_arithmetic_expression(block_id, left, right, |left, right| {
+            ExpressionKind::Subtract { left, right }
+        })
+    }
+
+    pub fn add_multiply_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_arithmetic_expression(block_id, left, right, |left, right| {
+            ExpressionKind::Multiply { left, right }
+        })
+    }
+
+    pub fn add_divide_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_arithmetic_expression(block_id, left, right, |left, right| {
+            ExpressionKind::Divide { left, right }
+        })
+    }
+
+    pub fn add_remainder_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_arithmetic_expression(block_id, left, right, |left, right| {
+            ExpressionKind::Remainder { left, right }
+        })
+    }
+
     pub fn set_return(
         &mut self,
         block_id: BlockId,
@@ -592,6 +648,38 @@ impl MutationTransaction<'_> {
             .insert(expression_id, Expression::new(expression_id, kind));
         self.provisional_expression_ids.insert(expression_id);
         Ok(expression_id)
+    }
+
+    fn add_arithmetic_expression(
+        &mut self,
+        block_id: BlockId,
+        left: ExpressionId,
+        right: ExpressionId,
+        kind: impl FnOnce(ExpressionId, ExpressionId) -> ExpressionKind,
+    ) -> Result<ExpressionId, MutationError> {
+        // Validate both pre-existing operand identities before allocating the
+        // new Expression. Together with immutability, this makes safe cycle
+        // construction impossible (`MNIR-ARITH-011` through `MNIR-ARITH-015`).
+        self.require_active()?;
+
+        let Some(block) = find_block(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        for operand_id in [left, right] {
+            if block.expression(operand_id).is_none() {
+                let error = if find_expression(&self.working_modules, operand_id).is_some() {
+                    MutationError::ExpressionNotOwnedByBlock {
+                        expression_id: operand_id,
+                        block_id,
+                    }
+                } else {
+                    MutationError::UnknownExpression(operand_id)
+                };
+                return Err(self.fail(error));
+            }
+        }
+
+        self.add_expression(block_id, kind(left, right))
     }
 
     fn allocate_module_id(&mut self) -> Result<ModuleId, MutationError> {

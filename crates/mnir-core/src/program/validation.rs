@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::ids::{BlockId, ExpressionId, FunctionId, ModuleId, ParameterId};
 
-use super::body::ExpressionKind;
+use super::body::{Block, ExpressionKind};
 use super::error::StructuralError;
 use super::model::{Module, RevisionState};
 
@@ -100,7 +100,20 @@ pub(super) fn validate_modules(
                         function_id: function.id,
                     });
                 }
+                if let Some((left, right)) = expression.kind.arithmetic_operands() {
+                    for operand_id in [left, right] {
+                        if !block.expressions.contains_key(&operand_id) {
+                            return Err(StructuralError::ArithmeticOperandNotInBlock {
+                                expression_id: expression.id,
+                                operand_id,
+                                block_id: block.id,
+                            });
+                        }
+                    }
+                }
             }
+
+            validate_acyclic_expression_dependencies(block)?;
 
             let Some(return_expression_id) = block.return_expression_id else {
                 return Err(StructuralError::UnterminatedBlock(block.id));
@@ -117,11 +130,58 @@ pub(super) fn validate_modules(
     Ok(())
 }
 
+/// Uses Kahn's algorithm so structural validation does not depend on recursive
+/// call depth. Duplicate left/right operand edges are retained deliberately;
+/// `Add(E1, E1)` therefore decrements both dependencies without being mistaken
+/// for a cycle (`MNIR-ARITH-009`, `MNIR-ARITH-096`).
+fn validate_acyclic_expression_dependencies(block: &Block) -> Result<(), StructuralError> {
+    let mut dependency_count = HashMap::with_capacity(block.expressions.len());
+    let mut dependents: HashMap<ExpressionId, Vec<ExpressionId>> = HashMap::new();
+
+    for expression in block.expressions.values() {
+        let Some((left, right)) = expression.kind.arithmetic_operands() else {
+            dependency_count.insert(expression.id, 0_usize);
+            continue;
+        };
+        dependency_count.insert(expression.id, 2);
+        dependents.entry(left).or_default().push(expression.id);
+        dependents.entry(right).or_default().push(expression.id);
+    }
+
+    let mut ready: VecDeque<_> = dependency_count
+        .iter()
+        .filter_map(|(&id, &count)| (count == 0).then_some(id))
+        .collect();
+    let mut processed = 0_usize;
+
+    while let Some(id) = ready.pop_front() {
+        processed += 1;
+        if let Some(expression_dependents) = dependents.get(&id) {
+            for dependent_id in expression_dependents {
+                let Some(count) = dependency_count.get_mut(dependent_id) else {
+                    continue;
+                };
+                *count -= 1;
+                if *count == 0 {
+                    ready.push_back(*dependent_id);
+                }
+            }
+        }
+    }
+
+    if processed == block.expressions.len() {
+        Ok(())
+    } else {
+        Err(StructuralError::CyclicExpressionDependency(block.id))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::IntrinsicType;
     use crate::ids::{ExpressionId, FunctionId, ModuleId};
 
+    use super::super::body::ExpressionKind;
     use super::super::error::{MutationError, StructuralError, TransactionState};
     use super::super::model::MnirProgram;
 
@@ -339,6 +399,104 @@ mod tests {
             program.block(block_id).unwrap().return_expression_id(),
             Some(expression_id)
         );
+        assert!(program.validate_structure().is_ok());
+    }
+
+    // AR-ARITH-027 and MNIR-ARITH-009/-011/-069/-070. Only this private test
+    // can retarget operands; the production API keeps Expressions immutable.
+    #[test]
+    fn cyclic_expression_dependency_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let source_revision = program.revision_id();
+        let mut transaction = program.begin_transaction();
+        let module_id = transaction.add_module().unwrap();
+        let function_id = transaction
+            .add_function(module_id, IntrinsicType::Int32)
+            .unwrap();
+        let block_id = transaction.create_function_body(function_id).unwrap();
+        let first = transaction.add_int32_literal(block_id, 1).unwrap();
+        let second = transaction.add_int32_literal(block_id, 2).unwrap();
+        transaction.set_return(block_id, first).unwrap();
+
+        let block = &mut transaction
+            .working_modules_mut()
+            .get_mut(&module_id)
+            .unwrap()
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .block;
+        block.expressions.get_mut(&first).unwrap().kind = ExpressionKind::Add {
+            left: second,
+            right: second,
+        };
+        block.expressions.get_mut(&second).unwrap().kind = ExpressionKind::Multiply {
+            left: first,
+            right: first,
+        };
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::CyclicExpressionDependency(
+                block_id
+            ))
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        drop(transaction);
+        assert_eq!(program.revision_id(), source_revision);
+        assert!(program.function(function_id).is_none());
+        assert!(program.validate_structure().is_ok());
+    }
+
+    // MNIR-ARITH-006/-007/-063/-069/-070. Structural validation remains a
+    // defense even though safe construction rejects missing/foreign operands.
+    #[test]
+    fn structurally_corrupt_arithmetic_operand_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let source_revision = program.revision_id();
+        let mut transaction = program.begin_transaction();
+        let module_id = transaction.add_module().unwrap();
+        let function_id = transaction
+            .add_function(module_id, IntrinsicType::Int32)
+            .unwrap();
+        let block_id = transaction.create_function_body(function_id).unwrap();
+        let expression_id = transaction.add_int32_literal(block_id, 1).unwrap();
+        transaction.set_return(block_id, expression_id).unwrap();
+        let missing_operand = ExpressionId(expression_id.0 + 1_000);
+        transaction
+            .working_modules_mut()
+            .get_mut(&module_id)
+            .unwrap()
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .block
+            .expressions
+            .get_mut(&expression_id)
+            .unwrap()
+            .kind = ExpressionKind::Add {
+            left: missing_operand,
+            right: expression_id,
+        };
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::ArithmeticOperandNotInBlock {
+                expression_id,
+                operand_id: missing_operand,
+                block_id,
+            })
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        drop(transaction);
+        assert_eq!(program.revision_id(), source_revision);
+        assert!(program.function(function_id).is_none());
         assert!(program.validate_structure().is_ok());
     }
 }

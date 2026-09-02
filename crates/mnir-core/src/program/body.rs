@@ -2,8 +2,11 @@ use std::collections::HashMap;
 
 use crate::ids::{BlockId, ExpressionId, ParameterId};
 
-/// The five Expression alternatives defined by Expressions and Basic Function
-/// Bodies 0.1 (`MNIR-EXPR-019` through `MNIR-EXPR-034`).
+/// The closed set of Expression alternatives currently defined by MNIR.
+///
+/// Arithmetic operators extend the existing Expression model and retain
+/// operand position directly in their semantic data (`MNIR-ARITH-001` through
+/// `MNIR-ARITH-005`, `MNIR-ARITH-084`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExpressionKind {
     Int32Literal(i32),
@@ -11,6 +14,43 @@ pub enum ExpressionKind {
     BoolLiteral(bool),
     UnitLiteral,
     ParameterReference(ParameterId),
+    Add {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    Subtract {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    Multiply {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    Divide {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+    Remainder {
+        left: ExpressionId,
+        right: ExpressionId,
+    },
+}
+
+impl ExpressionKind {
+    pub(super) const fn arithmetic_operands(&self) -> Option<(ExpressionId, ExpressionId)> {
+        match self {
+            Self::Add { left, right }
+            | Self::Subtract { left, right }
+            | Self::Multiply { left, right }
+            | Self::Divide { left, right }
+            | Self::Remainder { left, right } => Some((*left, *right)),
+            Self::Int32Literal(_)
+            | Self::Int64Literal(_)
+            | Self::BoolLiteral(_)
+            | Self::UnitLiteral
+            | Self::ParameterReference(_) => None,
+        }
+    }
 }
 
 /// An independently addressable Expression owned by one Block.
