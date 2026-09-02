@@ -8,6 +8,8 @@ MNIR is intended to become a canonical semantic representation of programs. Futu
 
 Program Model 0.1 is implemented as the foundation for Program and Module identity, revisions, snapshots, forks, presentation metadata, and controlled mutation. Type System Foundations 0.1 adds the closed intrinsic type set `Int32`, `Int64`, `Bool`, and `Unit`. Functions and Parameters 0.1 adds Functions and ordered Parameters. Expressions and Basic Function Bodies 0.1 adds optional single-Block bodies, intrinsic literals, Parameter references, and Return terminators. Arithmetic Expressions 0.1 adds checked `Add`, `Subtract`, `Multiply`, `Divide`, and `Remainder` semantics as non-evaluated Expression structures. Semantic Verification and Diagnostics 0.1 adds revision-bound verification evidence and machine-readable arithmetic and Return type diagnostics. No evaluator, general control flow, invocation, EasyH support, or usable end-user tooling has been implemented. Development proceeds from the normative specification, and implementation must not silently fill in unspecified behavior.
 
+See the informative [development roadmap](docs/ROADMAP.md) for planned milestones toward MNIR 0.1.0.
+
 ## Development model
 
 ```text
