@@ -245,6 +245,15 @@ impl ProgramSnapshot {
         self.state.modules.get(&id)
     }
 
+    /// Iterates every Module in this immutable revision.
+    ///
+    /// Iteration order has no MNIR semantic meaning. This is the minimal
+    /// read-only traversal entry point required by `MNIR-VERIFY-087` through
+    /// `MNIR-VERIFY-089`.
+    pub fn modules(&self) -> impl Iterator<Item = &Module> {
+        self.state.modules.values()
+    }
+
     #[must_use]
     pub fn function(&self, id: FunctionId) -> Option<&Function> {
         find_function(&self.state.modules, id)
