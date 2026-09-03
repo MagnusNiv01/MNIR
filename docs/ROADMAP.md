@@ -76,17 +76,20 @@ Together they establish:
 - semantic verification and machine-readable diagnostics;
 - revision-bound `VerifiedProgram` evidence.
 
-## B. Basic Programming Model
+## B. Basic Programming Model — in progress
+
+Completed:
+
+- Conditional Control Flow 0.1, including finite acyclic multi-Block control-flow graphs, Branch terminators, and semantic verification rule set V0.3.
 
 Planned sequence:
 
-1. Conditional Control Flow and an initial control-flow graph
-2. Local Values and Bindings
-3. Function Calls
+1. Local Values and Bindings
+2. Function Calls
 
 The milestone is the ability to represent non-trivial multi-Function logic with conditions and local computation.
 
-For example, MNIR should eventually be able to represent a program conceptually equivalent to:
+Conditional Control Flow 0.1 can represent a program conceptually equivalent to:
 
 ```text
 max(a: Int32, b: Int32) -> Int32 {

@@ -23,6 +23,28 @@ This repository uses specification-driven development. These instructions apply 
 - Human-readable source code is a presentation or frontend form; it is not intended to become the canonical program representation.
 - Avoid dependencies unless there is a clear technical reason.
 
+## Documentation freshness before commits
+
+Before every Git commit, analyze whether the following documents accurately
+describe the repository's complete current state:
+
+- `README.md`;
+- `docs/ROADMAP.md`;
+- `docs/specification/README.md`.
+
+This review MUST consider the repository as a whole, including all implemented
+capabilities and specifications, and MUST NOT be limited to the changes included
+in the intended commit. Update any document that is stale or misleading about
+implementation status, supported capabilities, repository structure,
+development milestones, or the specification document inventory, regardless
+of which earlier change caused it to become stale. Do not create the commit
+until all three documents are up to date. If no update is required, leave the
+documents unchanged.
+
+This review does not authorize changing normative specification semantics to
+match an implementation. Normative specification documents remain subject to
+the authority and scope rules above.
+
 ## Safety and quality
 
 - Security checks must not be weakened merely to make tests pass.
