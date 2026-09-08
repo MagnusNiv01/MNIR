@@ -83,15 +83,16 @@ Completed:
 - Conditional Control Flow 0.1, including finite acyclic multi-Block control-flow graphs, Branch terminators, and semantic verification rule set V0.3.
 - Value Identity and Sequencing ADRs, establishing `ExpressionId` as local value identity and selecting a separate Block-local total order for future effectful Expressions.
 
-Next normative milestone:
+Next implementation milestone:
 
 1. Function Calls and Sequencing Foundations
 
-The next specification is expected to introduce Function Calls together with
-the first concrete use of `EffectSequence`. This avoids implementing unused
-sequencing infrastructure in isolation. The specification must define the
-applicable call and sequencing semantics; this roadmap remains informative and
-does not define them.
+The normative [Function Calls and Sequencing Foundations 0.1 specification](specification/09-function-calls-and-sequencing-foundations.md)
+defines Function Calls together with the first concrete use of
+`EffectSequence`. This avoids implementing unused sequencing infrastructure in
+isolation. The normative specification defines the applicable call and
+sequencing semantics; this roadmap remains informative and does not redefine
+them.
 
 Current direction:
 

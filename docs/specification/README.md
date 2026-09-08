@@ -17,5 +17,6 @@ If required behavior is absent, ambiguous, or contradictory, report a `SPECIFICA
 - [`06-semantic-verification-and-diagnostics.md`](06-semantic-verification-and-diagnostics.md) — Draft normative Semantic Verification and Diagnostics 0.1 specification defining revision-bound verification, verified artifacts, and machine-readable semantic diagnostics.
 - [`07-comparison-expressions.md`](07-comparison-expressions.md) — Draft normative Comparison Expressions 0.1 specification defining equality and signed-integer ordering comparisons together with Semantic Verification rule set version 0.2.
 - [`08-conditional-control-flow.md`](08-conditional-control-flow.md) — Draft normative Conditional Control Flow 0.1 specification defining finite acyclic multi-Block Function bodies, Branch terminators, CFG validity, and Semantic Verification rule set version 0.3.
+- [`09-function-calls-and-sequencing-foundations.md`](09-function-calls-and-sequencing-foundations.md) — Draft normative Function Calls and Sequencing Foundations 0.1 specification defining direct Call Expressions, Block-local EffectSequence semantics, and Semantic Verification rule set version 0.4.
 
 Later specification increments will define additional MNIR semantics.
