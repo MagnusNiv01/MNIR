@@ -81,11 +81,26 @@ Together they establish:
 Completed:
 
 - Conditional Control Flow 0.1, including finite acyclic multi-Block control-flow graphs, Branch terminators, and semantic verification rule set V0.3.
+- Value Identity and Sequencing ADRs, establishing `ExpressionId` as local value identity and selecting a separate Block-local total order for future effectful Expressions.
 
-Planned sequence:
+Next normative milestone:
 
-1. Local Values and Bindings
-2. Function Calls
+1. Function Calls and Sequencing Foundations
+
+The next specification is expected to introduce Function Calls together with
+the first concrete use of `EffectSequence`. This avoids implementing unused
+sequencing infrastructure in isolation. The specification must define the
+applicable call and sequencing semantics; this roadmap remains informative and
+does not define them.
+
+Current direction:
+
+```text
+Conditional Control Flow              Done
+Value Identity & Sequencing ADRs      Done
+Function Calls & Sequencing           Next
+Domain Types                          Planned
+```
 
 The milestone is the ability to represent non-trivial multi-Function logic with conditions and local computation.
 
@@ -416,9 +431,9 @@ This release boundary does not imply that these capabilities will never be devel
 | Arithmetic Expressions | Done |
 | Semantic Verification and Diagnostics | Done |
 | Comparison Expressions | Done |
-| Conditional Control Flow | Planned |
-| Local Values / Bindings | Planned |
-| Function Calls | Planned |
+| Conditional Control Flow | Done |
+| Value Identity & Sequencing ADRs | Done |
+| Function Calls & Sequencing Foundations | Next |
 | Domain Types | Planned |
 | Security Foundations | Planned |
 | Effects | Planned |
