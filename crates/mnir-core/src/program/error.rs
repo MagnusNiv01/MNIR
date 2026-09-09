@@ -71,6 +71,36 @@ pub enum StructuralError {
         operand_id: ExpressionId,
         block_id: BlockId,
     },
+    DanglingCallTarget {
+        expression_id: ExpressionId,
+        function_id: FunctionId,
+    },
+    CallArgumentNotInBlock {
+        expression_id: ExpressionId,
+        argument_id: ExpressionId,
+        block_id: BlockId,
+    },
+    EffectSequenceEntryNotInBlock {
+        block_id: BlockId,
+        expression_id: ExpressionId,
+    },
+    EffectSequenceEntryNotCall {
+        block_id: BlockId,
+        expression_id: ExpressionId,
+    },
+    DuplicateEffectSequenceEntry {
+        block_id: BlockId,
+        expression_id: ExpressionId,
+    },
+    CallMissingFromEffectSequence {
+        block_id: BlockId,
+        expression_id: ExpressionId,
+    },
+    EffectSequenceOrderConflict {
+        block_id: BlockId,
+        dependency_id: ExpressionId,
+        dependent_id: ExpressionId,
+    },
     CyclicExpressionDependency(BlockId),
 }
 
@@ -216,6 +246,57 @@ impl fmt::Display for StructuralError {
                 formatter,
                 "comparison expression {expression_id:?} refers to operand {operand_id:?} not owned by block {block_id:?}"
             ),
+            Self::DanglingCallTarget {
+                expression_id,
+                function_id,
+            } => write!(
+                formatter,
+                "Call expression {expression_id:?} targets missing function {function_id:?}"
+            ),
+            Self::CallArgumentNotInBlock {
+                expression_id,
+                argument_id,
+                block_id,
+            } => write!(
+                formatter,
+                "Call expression {expression_id:?} refers to argument {argument_id:?} not owned by block {block_id:?}"
+            ),
+            Self::EffectSequenceEntryNotInBlock {
+                block_id,
+                expression_id,
+            } => write!(
+                formatter,
+                "effect sequence in block {block_id:?} refers to missing expression {expression_id:?}"
+            ),
+            Self::EffectSequenceEntryNotCall {
+                block_id,
+                expression_id,
+            } => write!(
+                formatter,
+                "effect sequence in block {block_id:?} refers to non-Call expression {expression_id:?}"
+            ),
+            Self::DuplicateEffectSequenceEntry {
+                block_id,
+                expression_id,
+            } => write!(
+                formatter,
+                "effect sequence in block {block_id:?} contains Call {expression_id:?} more than once"
+            ),
+            Self::CallMissingFromEffectSequence {
+                block_id,
+                expression_id,
+            } => write!(
+                formatter,
+                "Call expression {expression_id:?} is absent from block {block_id:?}'s effect sequence"
+            ),
+            Self::EffectSequenceOrderConflict {
+                block_id,
+                dependency_id,
+                dependent_id,
+            } => write!(
+                formatter,
+                "effect sequence in block {block_id:?} orders dependent Call {dependent_id:?} before Call dependency {dependency_id:?}"
+            ),
             Self::CyclicExpressionDependency(block_id) => write!(
                 formatter,
                 "block {block_id:?} contains a cyclic Expression dependency"
@@ -260,6 +341,8 @@ pub enum MutationError {
         block_id: BlockId,
         function_id: FunctionId,
     },
+    EffectSequenceEntryNotCall(ExpressionId),
+    DuplicateEffectSequenceEntry(ExpressionId),
     SourceRevisionChanged {
         expected: RevisionId,
         actual: RevisionId,
@@ -314,6 +397,14 @@ impl fmt::Display for MutationError {
                 formatter,
                 "block {block_id:?} is not owned by function {function_id:?}"
             ),
+            Self::EffectSequenceEntryNotCall(expression_id) => write!(
+                formatter,
+                "expression {expression_id:?} is not a Call and cannot be effect-sequenced"
+            ),
+            Self::DuplicateEffectSequenceEntry(expression_id) => write!(
+                formatter,
+                "Call expression {expression_id:?} occurs more than once in the effect sequence"
+            ),
             Self::SourceRevisionChanged { expected, actual } => write!(
                 formatter,
                 "transaction source revision changed from {expected:?} to {actual:?}"
@@ -332,6 +423,10 @@ pub enum ExpressionTypeError {
     UnresolvedParameter {
         expression_id: ExpressionId,
         parameter_id: ParameterId,
+    },
+    UnresolvedFunction {
+        expression_id: ExpressionId,
+        function_id: FunctionId,
     },
     OperandTypeUnavailable {
         expression_id: ExpressionId,
@@ -353,6 +448,13 @@ impl fmt::Display for ExpressionTypeError {
             } => write!(
                 formatter,
                 "cannot derive type of expression {expression_id:?}: parameter {parameter_id:?} does not resolve"
+            ),
+            Self::UnresolvedFunction {
+                expression_id,
+                function_id,
+            } => write!(
+                formatter,
+                "cannot derive type of expression {expression_id:?}: target function {function_id:?} does not resolve"
             ),
             Self::OperandTypeUnavailable { expression_id } => write!(
                 formatter,

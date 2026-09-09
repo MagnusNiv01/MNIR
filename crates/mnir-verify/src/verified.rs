@@ -6,6 +6,7 @@ pub enum VerificationRuleSet {
     SemanticVerificationAndDiagnosticsV0_1,
     SemanticVerificationAndDiagnosticsV0_2,
     SemanticVerificationAndDiagnosticsV0_3,
+    SemanticVerificationAndDiagnosticsV0_4,
 }
 
 impl VerificationRuleSet {
@@ -20,6 +21,9 @@ impl VerificationRuleSet {
             }
             Self::SemanticVerificationAndDiagnosticsV0_3 => {
                 "MNIR Semantic Verification and Diagnostics 0.3"
+            }
+            Self::SemanticVerificationAndDiagnosticsV0_4 => {
+                "MNIR Semantic Verification and Diagnostics 0.4"
             }
         }
     }

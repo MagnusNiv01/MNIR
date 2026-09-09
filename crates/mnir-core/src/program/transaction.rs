@@ -117,9 +117,9 @@ impl MutationTransaction<'_> {
 
     /// Derives an Expression type from the current working state.
     ///
-    /// This is intentionally read-only: an unresolved Parameter reference
-    /// reports [`ExpressionTypeError`] without changing transaction state
-    /// (`MNIR-EXPR-090`, `MNIR-EXPR-091`).
+    /// This is intentionally read-only: an unresolved Parameter reference or
+    /// Call target reports [`ExpressionTypeError`] without changing transaction
+    /// state (`MNIR-EXPR-090`, `MNIR-EXPR-091`, `MNIR-CALL-032`).
     #[must_use]
     pub fn expression_type(
         &self,
@@ -630,6 +630,86 @@ impl MutationTransaction<'_> {
         self.add_comparison_expression(block_id, left, right, |left, right| {
             ExpressionKind::GreaterThanOrEqual { left, right }
         })
+    }
+
+    /// Creates an effectful direct Call without implicitly changing the
+    /// owning Block's effect order (`MNIR-CALL-022` through `MNIR-CALL-026`,
+    /// `MNIR-CALL-133`).
+    pub fn add_call_expression(
+        &mut self,
+        block_id: BlockId,
+        target_function_id: FunctionId,
+        arguments: Vec<ExpressionId>,
+    ) -> Result<ExpressionId, MutationError> {
+        self.require_active()?;
+
+        let Some(block) = find_block(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        if find_function(&self.working_modules, target_function_id).is_none() {
+            return Err(self.fail(MutationError::UnknownFunction(target_function_id)));
+        }
+        for &argument_id in &arguments {
+            if block.expression(argument_id).is_none() {
+                let error = if find_expression(&self.working_modules, argument_id).is_some() {
+                    MutationError::ExpressionNotOwnedByBlock {
+                        expression_id: argument_id,
+                        block_id,
+                    }
+                } else {
+                    MutationError::UnknownExpression(argument_id)
+                };
+                return Err(self.fail(error));
+            }
+        }
+
+        self.add_expression(
+            block_id,
+            ExpressionKind::Call {
+                target: target_function_id,
+                arguments,
+            },
+        )
+    }
+
+    /// Atomically replaces one Block's complete semantic effect order
+    /// (`MNIR-CALL-046` through `MNIR-CALL-053`).
+    pub fn set_effect_sequence(
+        &mut self,
+        block_id: BlockId,
+        effect_sequence: Vec<ExpressionId>,
+    ) -> Result<(), MutationError> {
+        self.require_active()?;
+
+        let Some(block) = find_block(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        let mut seen = HashSet::with_capacity(effect_sequence.len());
+        for &expression_id in &effect_sequence {
+            let Some(expression) = block.expression(expression_id) else {
+                let error = if find_expression(&self.working_modules, expression_id).is_some() {
+                    MutationError::ExpressionNotOwnedByBlock {
+                        expression_id,
+                        block_id,
+                    }
+                } else {
+                    MutationError::UnknownExpression(expression_id)
+                };
+                return Err(self.fail(error));
+            };
+            if !expression.kind.is_call() {
+                return Err(self.fail(MutationError::EffectSequenceEntryNotCall(expression_id)));
+            }
+            if !seen.insert(expression_id) {
+                return Err(self.fail(MutationError::DuplicateEffectSequenceEntry(expression_id)));
+            }
+        }
+
+        let Some(block) = find_block_mut(&mut self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        block.effect_sequence = effect_sequence;
+        Ok(())
     }
 
     pub fn set_return(

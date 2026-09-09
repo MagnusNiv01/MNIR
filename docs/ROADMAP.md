@@ -76,31 +76,28 @@ Together they establish:
 - semantic verification and machine-readable diagnostics;
 - revision-bound `VerifiedProgram` evidence.
 
-## B. Basic Programming Model — in progress
+## B. Basic Programming Model — complete
 
 Completed:
 
 - Conditional Control Flow 0.1, including finite acyclic multi-Block control-flow graphs, Branch terminators, and semantic verification rule set V0.3.
 - Value Identity and Sequencing ADRs, establishing `ExpressionId` as local value identity and selecting a separate Block-local total order for future effectful Expressions.
+- Function Calls and Sequencing Foundations 0.1, including direct effectful Call Expressions, explicit Block-local `EffectSequence` order, and semantic verification rule set V0.4.
 
-Next implementation milestone:
-
-1. Function Calls and Sequencing Foundations
+The next implementation milestone is Domain Types in the Safe Domain Model.
 
 The normative [Function Calls and Sequencing Foundations 0.1 specification](specification/09-function-calls-and-sequencing-foundations.md)
 defines Function Calls together with the first concrete use of
-`EffectSequence`. This avoids implementing unused sequencing infrastructure in
-isolation. The normative specification defines the applicable call and
-sequencing semantics; this roadmap remains informative and does not redefine
-them.
+`EffectSequence`. Its implementation keeps value dependencies separate from
+explicit effect order and provides V0.4 Call-argument diagnostics.
 
 Current direction:
 
 ```text
 Conditional Control Flow              Done
 Value Identity & Sequencing ADRs      Done
-Function Calls & Sequencing           Next
-Domain Types                          Planned
+Function Calls & Sequencing           Done
+Domain Types                          Next
 ```
 
 The milestone is the ability to represent non-trivial multi-Function logic with conditions and local computation.
@@ -434,8 +431,8 @@ This release boundary does not imply that these capabilities will never be devel
 | Comparison Expressions | Done |
 | Conditional Control Flow | Done |
 | Value Identity & Sequencing ADRs | Done |
-| Function Calls & Sequencing Foundations | Next |
-| Domain Types | Planned |
+| Function Calls & Sequencing Foundations | Done |
+| Domain Types | Next |
 | Security Foundations | Planned |
 | Effects | Planned |
 | Contracts | Planned |

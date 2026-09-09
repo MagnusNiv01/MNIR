@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ids::{BlockId, ExpressionId, ParameterId};
+use crate::ids::{BlockId, ExpressionId, FunctionId, ParameterId};
 
 /// The closed set of Block terminators defined by Conditional Control Flow 0.1.
 ///
@@ -20,11 +20,11 @@ pub enum Terminator {
 
 /// The closed set of Expression alternatives currently defined by MNIR.
 ///
-/// Arithmetic and comparison operators extend the existing Expression model
-/// and retain operand position directly in their semantic data
+/// Arithmetic, comparison, and Call alternatives extend the existing
+/// Expression model and retain operand/argument position directly in their semantic data
 /// (`MNIR-ARITH-001` through `MNIR-ARITH-005`, `MNIR-CMP-005` through
-/// `MNIR-CMP-009`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// `MNIR-CMP-009`, `MNIR-CALL-006` through `MNIR-CALL-008`).
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExpressionKind {
     Int32Literal(i32),
     Int64Literal(i64),
@@ -75,6 +75,10 @@ pub enum ExpressionKind {
         left: ExpressionId,
         right: ExpressionId,
     },
+    Call {
+        target: FunctionId,
+        arguments: Vec<ExpressionId>,
+    },
 }
 
 impl ExpressionKind {
@@ -95,7 +99,8 @@ impl ExpressionKind {
             | Self::Int64Literal(_)
             | Self::BoolLiteral(_)
             | Self::UnitLiteral
-            | Self::ParameterReference(_) => None,
+            | Self::ParameterReference(_)
+            | Self::Call { .. } => None,
         }
     }
 
@@ -116,15 +121,25 @@ impl ExpressionKind {
             | Self::Subtract { .. }
             | Self::Multiply { .. }
             | Self::Divide { .. }
-            | Self::Remainder { .. } => None,
+            | Self::Remainder { .. }
+            | Self::Call { .. } => None,
         }
     }
 
-    pub(super) const fn dependency_operands(&self) -> Option<(ExpressionId, ExpressionId)> {
-        match self.arithmetic_operands() {
-            Some(operands) => Some(operands),
-            None => self.comparison_operands(),
+    pub(super) fn dependencies(&self) -> Vec<ExpressionId> {
+        if let Some((left, right)) = self.arithmetic_operands() {
+            vec![left, right]
+        } else if let Some((left, right)) = self.comparison_operands() {
+            vec![left, right]
+        } else if let Self::Call { arguments, .. } = self {
+            arguments.clone()
+        } else {
+            Vec::new()
         }
+    }
+
+    pub(super) const fn is_call(&self) -> bool {
+        matches!(self, Self::Call { .. })
     }
 }
 
@@ -152,10 +167,10 @@ impl Expression {
         &self.kind
     }
 
-    pub(super) const fn copied(&self) -> Self {
+    pub(super) fn copied(&self) -> Self {
         Self {
             id: self.id,
-            kind: self.kind,
+            kind: self.kind.clone(),
         }
     }
 }
@@ -165,6 +180,7 @@ impl Expression {
 pub struct Block {
     pub(super) id: BlockId,
     pub(super) expressions: HashMap<ExpressionId, Expression>,
+    pub(super) effect_sequence: Vec<ExpressionId>,
     pub(super) terminator: Option<Terminator>,
 }
 
@@ -173,6 +189,7 @@ impl Block {
         Self {
             id,
             expressions: HashMap::new(),
+            effect_sequence: Vec::new(),
             terminator: None,
         }
     }
@@ -197,6 +214,14 @@ impl Block {
         self.expressions.values()
     }
 
+    /// Returns effectful Call Expressions in semantic execution order
+    /// (`MNIR-CALL-002` through `MNIR-CALL-004`, `MNIR-CALL-043`,
+    /// `MNIR-CALL-044`).
+    #[must_use]
+    pub fn effect_sequence(&self) -> &[ExpressionId] {
+        &self.effect_sequence
+    }
+
     #[must_use]
     pub const fn return_expression_id(&self) -> Option<ExpressionId> {
         match self.terminator {
@@ -219,6 +244,7 @@ impl Block {
                 .iter()
                 .map(|(&id, expression)| (id, expression.copied()))
                 .collect(),
+            effect_sequence: self.effect_sequence.clone(),
             terminator: self.terminator,
         }
     }

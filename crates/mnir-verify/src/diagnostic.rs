@@ -3,7 +3,7 @@ use std::fmt;
 use mnir_core::{BlockId, ExpressionId, FunctionId, IntrinsicType};
 
 /// Stable machine-readable diagnostic categories defined by verification rule
-/// sets V0_1 through V0_3.
+/// sets V0_1 through V0_4.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticCode {
     ArithmeticOperandTypeUnavailable,
@@ -16,6 +16,9 @@ pub enum DiagnosticCode {
     BranchConditionTypeUnavailable,
     BranchConditionNotBool,
     ControlFlowReturnTypeMismatch,
+    CallArgumentCountMismatch,
+    CallArgumentTypeUnavailable,
+    CallArgumentTypeMismatch,
 }
 
 impl DiagnosticCode {
@@ -33,6 +36,9 @@ impl DiagnosticCode {
             Self::BranchConditionTypeUnavailable => "MNIR-DIAG-008",
             Self::BranchConditionNotBool => "MNIR-DIAG-009",
             Self::ControlFlowReturnTypeMismatch => "MNIR-DIAG-010",
+            Self::CallArgumentCountMismatch => "MNIR-DIAG-011",
+            Self::CallArgumentTypeUnavailable => "MNIR-DIAG-012",
+            Self::CallArgumentTypeMismatch => "MNIR-DIAG-013",
         }
     }
 }
@@ -43,7 +49,7 @@ impl fmt::Display for DiagnosticCode {
     }
 }
 
-/// The only diagnostic severity defined by V0_1 through V0_3.
+/// The only diagnostic severity defined by V0_1 through V0_4.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticSeverity {
     Error,
@@ -58,6 +64,15 @@ pub enum DiagnosticPrimarySubject {
     Expression(ExpressionId),
     Function(FunctionId),
     Block(BlockId),
+}
+
+/// One zero-based Call argument position whose derived intrinsic type differs
+/// from the corresponding target Parameter type.
+#[derive(Debug, Eq, PartialEq)]
+pub struct CallArgumentTypeMismatch {
+    pub argument_index: usize,
+    pub expected_type: IntrinsicType,
+    pub actual_type: IntrinsicType,
 }
 
 /// One semantic verification failure with its complete normative payload.
@@ -109,6 +124,22 @@ pub enum Diagnostic {
         expected_type: IntrinsicType,
         actual_type: IntrinsicType,
     },
+    CallArgumentCountMismatch {
+        expression_id: ExpressionId,
+        function_id: FunctionId,
+        expected_count: usize,
+        actual_count: usize,
+    },
+    CallArgumentTypeUnavailable {
+        expression_id: ExpressionId,
+        function_id: FunctionId,
+        argument_indices: Vec<usize>,
+    },
+    CallArgumentTypeMismatch {
+        expression_id: ExpressionId,
+        function_id: FunctionId,
+        mismatches: Vec<CallArgumentTypeMismatch>,
+    },
 }
 
 impl Diagnostic {
@@ -142,6 +173,9 @@ impl Diagnostic {
             Self::ControlFlowReturnTypeMismatch { .. } => {
                 DiagnosticCode::ControlFlowReturnTypeMismatch
             }
+            Self::CallArgumentCountMismatch { .. } => DiagnosticCode::CallArgumentCountMismatch,
+            Self::CallArgumentTypeUnavailable { .. } => DiagnosticCode::CallArgumentTypeUnavailable,
+            Self::CallArgumentTypeMismatch { .. } => DiagnosticCode::CallArgumentTypeMismatch,
         }
     }
 
@@ -160,7 +194,10 @@ impl Diagnostic {
             | Self::ArithmeticUnsupportedOperandType { expression_id, .. }
             | Self::ComparisonOperandTypeUnavailable { expression_id }
             | Self::ComparisonOperandTypeMismatch { expression_id, .. }
-            | Self::ComparisonUnsupportedOperandType { expression_id, .. } => {
+            | Self::ComparisonUnsupportedOperandType { expression_id, .. }
+            | Self::CallArgumentCountMismatch { expression_id, .. }
+            | Self::CallArgumentTypeUnavailable { expression_id, .. }
+            | Self::CallArgumentTypeMismatch { expression_id, .. } => {
                 DiagnosticPrimarySubject::Expression(*expression_id)
             }
             Self::ReturnTypeMismatch { function_id, .. } => {

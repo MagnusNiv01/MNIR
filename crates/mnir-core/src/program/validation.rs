@@ -4,7 +4,7 @@ use crate::ids::{BlockId, ExpressionId, FunctionId, ModuleId, ParameterId};
 
 use super::body::{Block, ExpressionKind, Terminator};
 use super::error::StructuralError;
-use super::model::{Module, RevisionState};
+use super::model::{Module, RevisionState, find_function};
 
 pub(super) fn validate_revision_state(state: &RevisionState) -> Result<(), StructuralError> {
     validate_modules(
@@ -93,12 +93,14 @@ pub(super) fn validate_modules(
                 }
 
                 validate_block_expressions(
+                    modules,
                     function,
                     block,
                     committed_expression_ids,
                     &mut seen_expression_ids,
                 )?;
                 validate_acyclic_expression_dependencies(block)?;
+                validate_effect_sequence(block)?;
 
                 match block.terminator {
                     None => return Err(StructuralError::UnterminatedBlock(block.id)),
@@ -141,6 +143,7 @@ pub(super) fn validate_modules(
 }
 
 fn validate_block_expressions(
+    modules: &HashMap<ModuleId, Module>,
     function: &super::model::Function,
     block: &Block,
     committed_expression_ids: &HashSet<ExpressionId>,
@@ -161,12 +164,12 @@ fn validate_block_expressions(
         if !seen_expression_ids.insert(expression.id) {
             return Err(StructuralError::DuplicateExpressionIdentity(expression.id));
         }
-        if let ExpressionKind::ParameterReference(parameter_id) = expression.kind
-            && function.parameter(parameter_id).is_none()
+        if let ExpressionKind::ParameterReference(parameter_id) = &expression.kind
+            && function.parameter(*parameter_id).is_none()
         {
             return Err(StructuralError::DanglingParameterReference {
                 expression_id: expression.id,
-                parameter_id,
+                parameter_id: *parameter_id,
                 function_id: function.id,
             });
         }
@@ -192,7 +195,90 @@ fn validate_block_expressions(
                 }
             }
         }
+        if let ExpressionKind::Call { target, arguments } = &expression.kind {
+            if find_function(modules, *target).is_none() {
+                return Err(StructuralError::DanglingCallTarget {
+                    expression_id: expression.id,
+                    function_id: *target,
+                });
+            }
+            for &argument_id in arguments {
+                if !block.expressions.contains_key(&argument_id) {
+                    return Err(StructuralError::CallArgumentNotInBlock {
+                        expression_id: expression.id,
+                        argument_id,
+                        block_id: block.id,
+                    });
+                }
+            }
+        }
     }
+    Ok(())
+}
+
+fn validate_effect_sequence(block: &Block) -> Result<(), StructuralError> {
+    let mut positions = HashMap::with_capacity(block.effect_sequence.len());
+    for (position, &expression_id) in block.effect_sequence.iter().enumerate() {
+        let Some(expression) = block.expressions.get(&expression_id) else {
+            return Err(StructuralError::EffectSequenceEntryNotInBlock {
+                block_id: block.id,
+                expression_id,
+            });
+        };
+        if !expression.kind.is_call() {
+            return Err(StructuralError::EffectSequenceEntryNotCall {
+                block_id: block.id,
+                expression_id,
+            });
+        }
+        if positions.insert(expression_id, position).is_some() {
+            return Err(StructuralError::DuplicateEffectSequenceEntry {
+                block_id: block.id,
+                expression_id,
+            });
+        }
+    }
+
+    for expression in block.expressions.values() {
+        if expression.kind.is_call() && !positions.contains_key(&expression.id) {
+            return Err(StructuralError::CallMissingFromEffectSequence {
+                block_id: block.id,
+                expression_id: expression.id,
+            });
+        }
+    }
+
+    // A Call dependency can be separated from its consumer by any number of
+    // pure Expressions. Every reachable Call dependency must precede the
+    // consuming Call in the semantic effect order (`MNIR-CALL-056` through
+    // `MNIR-CALL-060`).
+    for expression in block
+        .expressions
+        .values()
+        .filter(|expression| expression.kind.is_call())
+    {
+        let dependent_position = positions[&expression.id];
+        let mut visited = HashSet::new();
+        let mut pending = expression.kind.dependencies();
+        while let Some(dependency_id) = pending.pop() {
+            if !visited.insert(dependency_id) {
+                continue;
+            }
+            let dependency = block
+                .expressions
+                .get(&dependency_id)
+                .expect("validated Expression dependency");
+            if dependency.kind.is_call() && positions[&dependency_id] >= dependent_position {
+                return Err(StructuralError::EffectSequenceOrderConflict {
+                    block_id: block.id,
+                    dependency_id,
+                    dependent_id: expression.id,
+                });
+            }
+            pending.extend(dependency.kind.dependencies());
+        }
+    }
+
     Ok(())
 }
 
@@ -273,22 +359,22 @@ fn validate_control_flow(
 }
 
 /// Uses Kahn's algorithm so structural validation does not depend on recursive
-/// call depth. Duplicate left/right operand edges are retained deliberately;
-/// `Add(E1, E1)` or `Equal(E1, E1)` therefore decrements both dependencies
-/// without being mistaken for a cycle (`MNIR-ARITH-009`, `MNIR-ARITH-096`,
-/// `MNIR-CMP-010`, `MNIR-CMP-014`, `MNIR-CMP-015`).
+/// dependency depth. Duplicate operand/argument edges are retained
+/// deliberately and therefore cannot be mistaken for a cycle
+/// (`MNIR-ARITH-009`, `MNIR-CMP-014`, `MNIR-CALL-131`, `MNIR-CALL-132`).
 fn validate_acyclic_expression_dependencies(block: &Block) -> Result<(), StructuralError> {
     let mut dependency_count = HashMap::with_capacity(block.expressions.len());
     let mut dependents: HashMap<ExpressionId, Vec<ExpressionId>> = HashMap::new();
 
     for expression in block.expressions.values() {
-        let Some((left, right)) = expression.kind.dependency_operands() else {
-            dependency_count.insert(expression.id, 0_usize);
-            continue;
-        };
-        dependency_count.insert(expression.id, 2);
-        dependents.entry(left).or_default().push(expression.id);
-        dependents.entry(right).or_default().push(expression.id);
+        let dependencies = expression.kind.dependencies();
+        dependency_count.insert(expression.id, dependencies.len());
+        for dependency_id in dependencies {
+            dependents
+                .entry(dependency_id)
+                .or_default()
+                .push(expression.id);
+        }
     }
 
     let mut ready: VecDeque<_> = dependency_count
@@ -922,6 +1008,252 @@ mod tests {
                 block_id: entry,
                 target_block_id: foreign_block,
             })
+        );
+    }
+
+    // AR-CALL-051 and MNIR-CALL-039 through MNIR-CALL-042, MNIR-CALL-055,
+    // MNIR-CALL-059, MNIR-CALL-068, and MNIR-CALL-069. Production mutation
+    // rejects most of these states earlier; private access exercises the
+    // commit-time defense without weakening encapsulation.
+    #[test]
+    fn corrupt_effect_sequences_cannot_commit() {
+        fn fixture() -> (
+            MnirProgram,
+            ModuleId,
+            FunctionId,
+            BlockId,
+            ExpressionId,
+            ExpressionId,
+            ExpressionId,
+        ) {
+            let mut program = MnirProgram::new().unwrap();
+            let mut transaction = program.begin_transaction();
+            let module = transaction.add_module().unwrap();
+            let target = transaction
+                .add_function(module, IntrinsicType::Unit)
+                .unwrap();
+            let caller = transaction
+                .add_function(module, IntrinsicType::Unit)
+                .unwrap();
+            let block = transaction.create_function_body(caller).unwrap();
+            let call = transaction
+                .add_call_expression(block, target, Vec::new())
+                .unwrap();
+            let pure = transaction.add_unit_literal(block).unwrap();
+            transaction.set_effect_sequence(block, vec![call]).unwrap();
+            transaction.set_return(block, pure).unwrap();
+
+            let foreign = transaction
+                .add_function(module, IntrinsicType::Unit)
+                .unwrap();
+            let foreign_block = transaction.create_function_body(foreign).unwrap();
+            let foreign_call = transaction
+                .add_call_expression(foreign_block, target, Vec::new())
+                .unwrap();
+            transaction
+                .set_effect_sequence(foreign_block, vec![foreign_call])
+                .unwrap();
+            let foreign_unit = transaction.add_unit_literal(foreign_block).unwrap();
+            transaction.set_return(foreign_block, foreign_unit).unwrap();
+            transaction.commit().unwrap();
+            (program, module, caller, block, call, pure, foreign_call)
+        }
+
+        let (mut program, module, caller, block, call, _, _) = fixture();
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&caller)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&block)
+            .unwrap()
+            .effect_sequence
+            .clear();
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::CallMissingFromEffectSequence {
+                block_id: block,
+                expression_id: call,
+            })
+        );
+
+        let (mut program, module, caller, block, call, pure, _) = fixture();
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&caller)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&block)
+            .unwrap()
+            .effect_sequence = vec![call, pure];
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::EffectSequenceEntryNotCall {
+                block_id: block,
+                expression_id: pure,
+            })
+        );
+
+        let (mut program, module, caller, block, call, _, foreign_call) = fixture();
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&caller)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&block)
+            .unwrap()
+            .effect_sequence = vec![call, foreign_call];
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::EffectSequenceEntryNotInBlock {
+                block_id: block,
+                expression_id: foreign_call,
+            })
+        );
+
+        let (mut program, module, caller, block, call, _, _) = fixture();
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&caller)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&block)
+            .unwrap()
+            .effect_sequence = vec![call, call];
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::DuplicateEffectSequenceEntry {
+                block_id: block,
+                expression_id: call,
+            })
+        );
+
+        let mut program = MnirProgram::new().unwrap();
+        let mut transaction = program.begin_transaction();
+        let module = transaction.add_module().unwrap();
+        let producer = transaction
+            .add_function(module, IntrinsicType::Int32)
+            .unwrap();
+        let consumer = transaction
+            .add_function(module, IntrinsicType::Unit)
+            .unwrap();
+        let caller = transaction
+            .add_function(module, IntrinsicType::Unit)
+            .unwrap();
+        let block = transaction.create_function_body(caller).unwrap();
+        let first = transaction
+            .add_call_expression(block, producer, Vec::new())
+            .unwrap();
+        let second = transaction
+            .add_call_expression(block, consumer, vec![first])
+            .unwrap();
+        transaction
+            .set_effect_sequence(block, vec![first, second])
+            .unwrap();
+        let unit = transaction.add_unit_literal(block).unwrap();
+        transaction.set_return(block, unit).unwrap();
+        transaction.commit().unwrap();
+
+        let mut transaction = program.begin_transaction();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&caller)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&block)
+            .unwrap()
+            .effect_sequence = vec![second, first];
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::EffectSequenceOrderConflict {
+                block_id: block,
+                dependency_id: first,
+                dependent_id: second,
+            })
+        );
+    }
+
+    // AR-CALL-053 and MNIR-CALL-131/-132: Call argument edges share the same
+    // DAG with arithmetic and comparison dependencies.
+    #[test]
+    fn mixed_call_and_arithmetic_dependency_cycle_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let mut transaction = program.begin_transaction();
+        let module = transaction.add_module().unwrap();
+        let target = transaction
+            .add_function(module, IntrinsicType::Int32)
+            .unwrap();
+        let caller = transaction
+            .add_function(module, IntrinsicType::Int32)
+            .unwrap();
+        let block = transaction.create_function_body(caller).unwrap();
+        let call = transaction
+            .add_call_expression(block, target, Vec::new())
+            .unwrap();
+        let literal = transaction.add_int32_literal(block, 1).unwrap();
+        let arithmetic = transaction
+            .add_add_expression(block, call, literal)
+            .unwrap();
+        transaction.set_effect_sequence(block, vec![call]).unwrap();
+        transaction.set_return(block, arithmetic).unwrap();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&caller)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&block)
+            .unwrap()
+            .expressions
+            .get_mut(&call)
+            .unwrap()
+            .kind = ExpressionKind::Call {
+            target,
+            arguments: vec![arithmetic],
+        };
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::CyclicExpressionDependency(block))
         );
     }
 }

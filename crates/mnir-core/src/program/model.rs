@@ -593,6 +593,7 @@ pub(super) fn derive_expression_type(
         })?;
 
     Some(derive_expression_type_in_block(
+        modules,
         function,
         block,
         id,
@@ -602,6 +603,7 @@ pub(super) fn derive_expression_type(
 }
 
 fn derive_expression_type_in_block(
+    modules: &HashMap<ModuleId, Module>,
     function: &Function,
     block: &Block,
     id: ExpressionId,
@@ -628,6 +630,12 @@ fn derive_expression_type_in_block(
                 expression_id: id,
                 parameter_id: *parameter_id,
             }),
+        Some(ExpressionKind::Call { target, .. }) => find_function(modules, *target)
+            .map(|target_function| target_function.return_type.copied())
+            .ok_or(ExpressionTypeError::UnresolvedFunction {
+                expression_id: id,
+                function_id: *target,
+            }),
         Some(
             ExpressionKind::Add { left, right }
             | ExpressionKind::Subtract { left, right }
@@ -635,15 +643,17 @@ fn derive_expression_type_in_block(
             | ExpressionKind::Divide { left, right }
             | ExpressionKind::Remainder { left, right },
         ) => {
-            let left_type = derive_expression_type_in_block(function, block, *left, memo, visiting);
+            let left_type =
+                derive_expression_type_in_block(modules, function, block, *left, memo, visiting);
             let right_type =
-                derive_expression_type_in_block(function, block, *right, memo, visiting);
+                derive_expression_type_in_block(modules, function, block, *right, memo, visiting);
             derive_arithmetic_type(id, left_type, right_type)
         }
         Some(ExpressionKind::Equal { left, right } | ExpressionKind::NotEqual { left, right }) => {
-            let left_type = derive_expression_type_in_block(function, block, *left, memo, visiting);
+            let left_type =
+                derive_expression_type_in_block(modules, function, block, *left, memo, visiting);
             let right_type =
-                derive_expression_type_in_block(function, block, *right, memo, visiting);
+                derive_expression_type_in_block(modules, function, block, *right, memo, visiting);
             derive_comparison_type(id, left_type, right_type, false)
         }
         Some(
@@ -652,9 +662,10 @@ fn derive_expression_type_in_block(
             | ExpressionKind::GreaterThan { left, right }
             | ExpressionKind::GreaterThanOrEqual { left, right },
         ) => {
-            let left_type = derive_expression_type_in_block(function, block, *left, memo, visiting);
+            let left_type =
+                derive_expression_type_in_block(modules, function, block, *left, memo, visiting);
             let right_type =
-                derive_expression_type_in_block(function, block, *right, memo, visiting);
+                derive_expression_type_in_block(modules, function, block, *right, memo, visiting);
             derive_comparison_type(id, left_type, right_type, true)
         }
     };

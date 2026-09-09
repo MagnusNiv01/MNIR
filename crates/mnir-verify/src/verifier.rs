@@ -7,7 +7,9 @@ use mnir_core::{
     Terminator,
 };
 
-use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPrimarySubject};
+use crate::diagnostic::{
+    CallArgumentTypeMismatch, Diagnostic, DiagnosticCode, DiagnosticPrimarySubject,
+};
 use crate::verified::{VerificationRuleSet, VerifiedProgram};
 
 /// The complete semantic failure from one verification run.
@@ -131,7 +133,7 @@ pub fn verify_with_rule_set(
     // inspection (`MNIR-VERIFY-027`, -037, -055, -067, -087 through -089).
     for module in snapshot.modules() {
         for function in module.functions() {
-            verify_function(function, rule_set, &mut diagnostics, &mut seen);
+            verify_function(snapshot, function, rule_set, &mut diagnostics, &mut seen);
         }
     }
 
@@ -145,13 +147,18 @@ pub fn verify_with_rule_set(
 }
 
 fn rule_set_is_applicable(snapshot: &ProgramSnapshot, rule_set: VerificationRuleSet) -> bool {
-    if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_3 {
+    if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_4 {
         return true;
     }
 
     !snapshot.modules().any(|module| {
         module.functions().any(|function| {
             function.body().is_some_and(|body| {
+                let has_call = body.blocks().any(|block| {
+                    block
+                        .expressions()
+                        .any(|expression| matches!(expression.kind(), ExpressionKind::Call { .. }))
+                });
                 let has_conditional_control_flow = body.block_count() > 1
                     || body
                         .blocks()
@@ -161,7 +168,9 @@ fn rule_set_is_applicable(snapshot: &ProgramSnapshot, rule_set: VerificationRule
                         .expressions()
                         .any(|expression| comparison_operands(expression.kind()).is_some())
                 });
-                has_conditional_control_flow
+                has_call
+                    || (rule_set != VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_3
+                        && has_conditional_control_flow)
                     || (rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1
                         && has_comparison)
             })
@@ -170,6 +179,7 @@ fn rule_set_is_applicable(snapshot: &ProgramSnapshot, rule_set: VerificationRule
 }
 
 fn verify_function(
+    snapshot: &ProgramSnapshot,
     function: &Function,
     rule_set: VerificationRuleSet,
     diagnostics: &mut Vec<Diagnostic>,
@@ -179,7 +189,7 @@ fn verify_function(
         return;
     };
     for block in body.blocks() {
-        verify_block_expressions(function, block, rule_set, diagnostics, seen);
+        verify_block_expressions(snapshot, function, block, rule_set, diagnostics, seen);
 
         match block.terminator() {
             Some(Terminator::Return { expression }) => verify_return(
@@ -187,29 +197,31 @@ fn verify_function(
                 block,
                 *expression,
                 body.block_count() > 1,
+                snapshot,
                 diagnostics,
                 seen,
             ),
             Some(Terminator::Branch { condition, .. }) => {
                 let mut memo = HashMap::new();
-                let diagnostic = match inspect_expression(function, block, *condition, &mut memo) {
-                    TypeInspection::Valid(IntrinsicType::Bool) => None,
-                    TypeInspection::Valid(actual_type) => {
-                        Some(Diagnostic::BranchConditionNotBool {
-                            block_id: block.id(),
-                            condition_expression_id: *condition,
-                            actual_type,
-                        })
-                    }
-                    TypeInspection::Unavailable
-                    | TypeInspection::Mismatch { .. }
-                    | TypeInspection::Unsupported(_) => {
-                        Some(Diagnostic::BranchConditionTypeUnavailable {
-                            block_id: block.id(),
-                            condition_expression_id: *condition,
-                        })
-                    }
-                };
+                let diagnostic =
+                    match inspect_expression(snapshot, function, block, *condition, &mut memo) {
+                        TypeInspection::Valid(IntrinsicType::Bool) => None,
+                        TypeInspection::Valid(actual_type) => {
+                            Some(Diagnostic::BranchConditionNotBool {
+                                block_id: block.id(),
+                                condition_expression_id: *condition,
+                                actual_type,
+                            })
+                        }
+                        TypeInspection::Unavailable
+                        | TypeInspection::Mismatch { .. }
+                        | TypeInspection::Unsupported(_) => {
+                            Some(Diagnostic::BranchConditionTypeUnavailable {
+                                block_id: block.id(),
+                                condition_expression_id: *condition,
+                            })
+                        }
+                    };
                 if let Some(diagnostic) = diagnostic {
                     collect(diagnostic, diagnostics, seen);
                 }
@@ -220,6 +232,7 @@ fn verify_function(
 }
 
 fn verify_block_expressions(
+    snapshot: &ProgramSnapshot,
     function: &Function,
     block: &Block,
     rule_set: VerificationRuleSet,
@@ -228,7 +241,7 @@ fn verify_block_expressions(
 ) {
     let mut memo = HashMap::new();
     for expression in block.expressions() {
-        let inspection = inspect_expression(function, block, expression.id(), &mut memo);
+        let inspection = inspect_expression(snapshot, function, block, expression.id(), &mut memo);
         let diagnostic = if arithmetic_operands(expression.kind()).is_some() {
             arithmetic_diagnostic(expression.id(), inspection)
         } else if rule_set != VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_1
@@ -241,6 +254,94 @@ fn verify_block_expressions(
         if let Some(diagnostic) = diagnostic {
             collect(diagnostic, diagnostics, seen);
         }
+        if rule_set == VerificationRuleSet::SemanticVerificationAndDiagnosticsV0_4
+            && let ExpressionKind::Call { target, arguments } = expression.kind()
+        {
+            verify_call(
+                snapshot,
+                function,
+                block,
+                expression.id(),
+                *target,
+                arguments,
+                diagnostics,
+                seen,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_call(
+    snapshot: &ProgramSnapshot,
+    containing_function: &Function,
+    block: &Block,
+    expression_id: ExpressionId,
+    target_function_id: mnir_core::FunctionId,
+    arguments: &[ExpressionId],
+    diagnostics: &mut Vec<Diagnostic>,
+    seen: &mut HashSet<(DiagnosticCode, DiagnosticPrimarySubject)>,
+) {
+    let target = snapshot
+        .function(target_function_id)
+        .expect("structural validation guarantees a resolved Call target");
+
+    if arguments.len() != target.parameter_count() {
+        collect(
+            Diagnostic::CallArgumentCountMismatch {
+                expression_id,
+                function_id: target_function_id,
+                expected_count: target.parameter_count(),
+                actual_count: arguments.len(),
+            },
+            diagnostics,
+            seen,
+        );
+    }
+
+    let mut unavailable = Vec::new();
+    let mut mismatches = Vec::new();
+    let mut memo = HashMap::new();
+    for (argument_index, (&argument_id, parameter)) in
+        arguments.iter().zip(target.parameters()).enumerate()
+    {
+        match inspect_expression(snapshot, containing_function, block, argument_id, &mut memo) {
+            TypeInspection::Valid(actual_type) => {
+                if &actual_type != parameter.intrinsic_type() {
+                    mismatches.push(CallArgumentTypeMismatch {
+                        argument_index,
+                        expected_type: copy_intrinsic_type(parameter.intrinsic_type()),
+                        actual_type,
+                    });
+                }
+            }
+            TypeInspection::Unavailable
+            | TypeInspection::Mismatch { .. }
+            | TypeInspection::Unsupported(_) => unavailable.push(argument_index),
+        }
+    }
+
+    if !unavailable.is_empty() {
+        collect(
+            Diagnostic::CallArgumentTypeUnavailable {
+                expression_id,
+                function_id: target_function_id,
+                argument_indices: unavailable,
+            },
+            diagnostics,
+            seen,
+        );
+    }
+    if !mismatches.is_empty() {
+        collect(
+            Diagnostic::CallArgumentTypeMismatch {
+                expression_id,
+                function_id: target_function_id,
+                mismatches,
+            },
+            diagnostics,
+            seen,
+        );
     }
 }
 
@@ -301,12 +402,17 @@ fn verify_return(
     block: &Block,
     return_expression_id: ExpressionId,
     multi_block: bool,
+    snapshot: &ProgramSnapshot,
     diagnostics: &mut Vec<Diagnostic>,
     seen: &mut HashSet<(DiagnosticCode, DiagnosticPrimarySubject)>,
 ) {
-    let TypeInspection::Valid(actual_type) =
-        inspect_expression(function, block, return_expression_id, &mut HashMap::new())
-    else {
+    let TypeInspection::Valid(actual_type) = inspect_expression(
+        snapshot,
+        function,
+        block,
+        return_expression_id,
+        &mut HashMap::new(),
+    ) else {
         return;
     };
     if &actual_type == function.return_type() {
@@ -374,6 +480,7 @@ impl TypeInspection {
 }
 
 fn inspect_expression(
+    snapshot: &ProgramSnapshot,
     function: &Function,
     block: &Block,
     expression_id: ExpressionId,
@@ -402,13 +509,13 @@ fn inspect_expression(
             | ExpressionKind::Divide { left, right }
             | ExpressionKind::Remainder { left, right },
         ) => {
-            let left = inspect_expression(function, block, *left, memo);
-            let right = inspect_expression(function, block, *right, memo);
+            let left = inspect_expression(snapshot, function, block, *left, memo);
+            let right = inspect_expression(snapshot, function, block, *right, memo);
             inspect_arithmetic(left, right)
         }
         Some(ExpressionKind::Equal { left, right } | ExpressionKind::NotEqual { left, right }) => {
-            let left = inspect_expression(function, block, *left, memo);
-            let right = inspect_expression(function, block, *right, memo);
+            let left = inspect_expression(snapshot, function, block, *left, memo);
+            let right = inspect_expression(snapshot, function, block, *right, memo);
             inspect_comparison(left, right, false)
         }
         Some(
@@ -417,10 +524,14 @@ fn inspect_expression(
             | ExpressionKind::GreaterThan { left, right }
             | ExpressionKind::GreaterThanOrEqual { left, right },
         ) => {
-            let left = inspect_expression(function, block, *left, memo);
-            let right = inspect_expression(function, block, *right, memo);
+            let left = inspect_expression(snapshot, function, block, *left, memo);
+            let right = inspect_expression(snapshot, function, block, *right, memo);
             inspect_comparison(left, right, true)
         }
+        Some(ExpressionKind::Call { target, .. }) => snapshot
+            .function(*target)
+            .map(|target| TypeInspection::Valid(copy_intrinsic_type(target.return_type())))
+            .unwrap_or(TypeInspection::Unavailable),
         None => TypeInspection::Unavailable,
     };
 
@@ -494,7 +605,8 @@ fn arithmetic_operands(kind: &ExpressionKind) -> Option<(ExpressionId, Expressio
         | ExpressionKind::Int64Literal(_)
         | ExpressionKind::BoolLiteral(_)
         | ExpressionKind::UnitLiteral
-        | ExpressionKind::ParameterReference(_) => None,
+        | ExpressionKind::ParameterReference(_)
+        | ExpressionKind::Call { .. } => None,
     }
 }
 
@@ -515,7 +627,8 @@ fn comparison_operands(kind: &ExpressionKind) -> Option<(ExpressionId, Expressio
         | ExpressionKind::Subtract { .. }
         | ExpressionKind::Multiply { .. }
         | ExpressionKind::Divide { .. }
-        | ExpressionKind::Remainder { .. } => None,
+        | ExpressionKind::Remainder { .. }
+        | ExpressionKind::Call { .. } => None,
     }
 }
 

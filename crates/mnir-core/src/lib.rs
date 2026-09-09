@@ -18,11 +18,13 @@
 //! operators from `docs/specification/07-comparison-expressions.md`.
 //! Conditional Control Flow extends Function bodies with multiple Blocks,
 //! entry identity, and Return/Branch terminators as defined by
-//! `docs/specification/08-conditional-control-flow.md`.
+//! `docs/specification/08-conditional-control-flow.md`. Direct effectful Call
+//! Expressions and per-Block EffectSequences are defined by
+//! `docs/specification/09-function-calls-and-sequencing-foundations.md`.
 //!
 //! It intentionally contains no semantic verifier, EasyH support, general
-//! type abstraction, arithmetic or comparison evaluation, loops, invocation,
-//! serialization, or execution model.
+//! type abstraction, arithmetic or comparison evaluation, loops, Call
+//! execution, serialization, or execution model.
 
 mod ids;
 mod intrinsic;
