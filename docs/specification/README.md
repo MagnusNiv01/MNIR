@@ -18,5 +18,6 @@ If required behavior is absent, ambiguous, or contradictory, report a `SPECIFICA
 - [`07-comparison-expressions.md`](07-comparison-expressions.md) — Draft normative Comparison Expressions 0.1 specification defining equality and signed-integer ordering comparisons together with Semantic Verification rule set version 0.2.
 - [`08-conditional-control-flow.md`](08-conditional-control-flow.md) — Draft normative Conditional Control Flow 0.1 specification defining finite acyclic multi-Block Function bodies, Branch terminators, CFG validity, and Semantic Verification rule set version 0.3.
 - [`09-function-calls-and-sequencing-foundations.md`](09-function-calls-and-sequencing-foundations.md) — Draft normative Function Calls and Sequencing Foundations 0.1 specification defining direct Call Expressions, Block-local EffectSequence semantics, and Semantic Verification rule set version 0.4.
+- [`10-persistent-semantic-identity.md`](10-persistent-semantic-identity.md) — Draft normative Persistent Semantic Identity 0.1 specification defining namespaced typed entity IDs, allocation authority, persistent non-reuse, and identity-preserving normal forks.
 
 Later specification increments will define additional MNIR semantics.

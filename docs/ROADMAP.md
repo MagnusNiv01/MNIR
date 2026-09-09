@@ -84,10 +84,11 @@ Completed:
 - Value Identity and Sequencing ADRs, establishing `ExpressionId` as local value identity and selecting a separate Block-local total order for future effectful Expressions.
 - Function Calls and Sequencing Foundations 0.1, including direct effectful Call Expressions, explicit Block-local `EffectSequence` order, and semantic verification rule set V0.4.
 
-The persistent semantic identity architecture is now accepted in
-[ADR 0003](adr/0003-persistent-semantic-identity-forks-and-merge.md). The next
-normative and implementation milestone is Persistent Semantic Identity 0.1,
-before Domain Types in the Safe Domain Model.
+The persistent semantic identity architecture is accepted in
+[ADR 0003](adr/0003-persistent-semantic-identity-forks-and-merge.md), and the
+normative [Persistent Semantic Identity 0.1 specification](specification/10-persistent-semantic-identity.md)
+is now defined. Its implementation is the next milestone, before Domain Types
+in the Safe Domain Model.
 
 The normative [Function Calls and Sequencing Foundations 0.1 specification](specification/09-function-calls-and-sequencing-foundations.md)
 defines Function Calls together with the first concrete use of
@@ -101,7 +102,8 @@ Conditional Control Flow              Done
 Value Identity & Sequencing ADRs      Done
 Function Calls & Sequencing           Done
 Persistent Semantic Identity ADR     Done
-Persistent Semantic Identity         Next
+Persistent Semantic Identity spec    Defined
+Persistent Semantic Identity impl    Next
 Domain Types                         Planned
 ```
 
