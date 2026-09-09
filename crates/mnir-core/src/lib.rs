@@ -3,7 +3,8 @@
 //! Canonical data model for MNIR Program Model 0.1, Type System Foundations
 //! 0.1, Functions and Parameters 0.1, and Expressions and Basic Function
 //! Bodies 0.1, Arithmetic Expressions 0.1, Comparison Expressions 0.1, and
-//! Conditional Control Flow 0.1.
+//! Conditional Control Flow 0.1, Function Calls and Sequencing Foundations
+//! 0.1, and Persistent Semantic Identity 0.1.
 //!
 //! This crate implements the Program, Module, identity, revision, presentation
 //! metadata, snapshot, fork, and controlled mutation concepts defined by
@@ -21,6 +22,9 @@
 //! `docs/specification/08-conditional-control-flow.md`. Direct effectful Call
 //! Expressions and per-Block EffectSequences are defined by
 //! `docs/specification/09-function-calls-and-sequencing-foundations.md`.
+//! Persistent namespaced entity identity, allocation authority, snapshots,
+//! and identity-preserving normal forks are defined by
+//! `docs/specification/10-persistent-semantic-identity.md`.
 //!
 //! It intentionally contains no semantic verifier, EasyH support, general
 //! type abstraction, arithmetic or comparison evaluation, loops, Call
@@ -32,8 +36,8 @@ mod presentation;
 mod program;
 
 pub use ids::{
-    BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, ProgramId,
-    RevisionId,
+    AllocationCounterState, AllocationNamespaceId, BlockId, ExpressionId, FunctionId,
+    IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId,
 };
 pub use intrinsic::IntrinsicType;
 pub use presentation::PresentationMetadata;

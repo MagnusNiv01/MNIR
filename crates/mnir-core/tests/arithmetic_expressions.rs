@@ -219,7 +219,7 @@ fn cross_block_operands_fail_and_poison_both_positions() {
     for foreign_on_left in [true, false] {
         let (mut program, _, _, block_id, local, foreign) = program_with_two_body_blocks();
         let source_revision = program.revision_id();
-        let source_history = program.committed_expression_id_count();
+        let source_allocation_state = program.allocation_counter_state();
         let mut transaction = program.begin_transaction();
         let provisional = transaction.add_unit_literal(block_id).unwrap();
         let (left, right) = if foreign_on_left {
@@ -238,7 +238,7 @@ fn cross_block_operands_fail_and_poison_both_positions() {
         assert!(transaction.commit().is_err());
         drop(transaction);
         assert_eq!(program.revision_id(), source_revision);
-        assert_eq!(program.committed_expression_id_count(), source_history);
+        assert_ne!(program.allocation_counter_state(), source_allocation_state);
         assert!(program.expression(provisional).is_none());
     }
 }
@@ -266,7 +266,7 @@ fn unknown_operands_fail_and_poison_both_positions() {
     for unknown_on_left in [true, false] {
         let (mut program, _, function_id, _, unknown) = retired_body_identity_program();
         let source_revision = program.revision_id();
-        let source_history = program.committed_expression_id_count();
+        let source_allocation_state = program.allocation_counter_state();
         let mut transaction = program.begin_transaction();
         let block_id = transaction.create_function_body(function_id).unwrap();
         let local = transaction.add_unit_literal(block_id).unwrap();
@@ -283,7 +283,7 @@ fn unknown_operands_fail_and_poison_both_positions() {
         assert!(transaction.commit().is_err());
         drop(transaction);
         assert_eq!(program.revision_id(), source_revision);
-        assert_eq!(program.committed_expression_id_count(), source_history);
+        assert_ne!(program.allocation_counter_state(), source_allocation_state);
         assert!(program.block(block_id).is_none());
     }
 }
@@ -511,7 +511,6 @@ fn arithmetic_identities_are_unique_retired_and_removed_by_cascades() {
         second_arithmetic,
     ] {
         assert!(program.expression(id).is_none());
-        assert!(program.is_expression_id_committed(id));
     }
     assert!(program.expression(third_arithmetic).is_some());
 
@@ -520,7 +519,6 @@ fn arithmetic_identities_are_unique_retired_and_removed_by_cascades() {
     transaction.commit().unwrap();
     for id in [third_literal, third_arithmetic] {
         assert!(program.expression(id).is_none());
-        assert!(program.is_expression_id_committed(id));
     }
 
     let mut transaction = program.begin_transaction();
@@ -578,7 +576,6 @@ fn snapshots_and_forks_preserve_arithmetic_references() {
     transaction.remove_module(module_id).unwrap();
     transaction.commit().unwrap();
     assert!(fork.expression(add).is_none());
-    assert!(fork.is_expression_id_committed(add));
 }
 
 // AR-ARITH-021 and AR-ARITH-022.

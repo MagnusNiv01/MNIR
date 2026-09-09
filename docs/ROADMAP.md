@@ -87,8 +87,11 @@ Completed:
 The persistent semantic identity architecture is accepted in
 [ADR 0003](adr/0003-persistent-semantic-identity-forks-and-merge.md), and the
 normative [Persistent Semantic Identity 0.1 specification](specification/10-persistent-semantic-identity.md)
-is now defined. Its implementation is the next milestone, before Domain Types
-in the Safe Domain Model.
+is implemented. Modules, Functions, Parameters, Blocks, and Expressions now
+use typed namespace/counter identities; allocation is monotonic across entity
+categories; and normal forks preserve inherited identities while receiving
+fresh allocation authority. Domain Types in the Safe Domain Model are the next
+planned milestone.
 
 The normative [Function Calls and Sequencing Foundations 0.1 specification](specification/09-function-calls-and-sequencing-foundations.md)
 defines Function Calls together with the first concrete use of
@@ -102,15 +105,14 @@ Conditional Control Flow              Done
 Value Identity & Sequencing ADRs      Done
 Function Calls & Sequencing           Done
 Persistent Semantic Identity ADR     Done
-Persistent Semantic Identity spec    Defined
-Persistent Semantic Identity impl    Next
-Domain Types                         Planned
+Persistent Semantic Identity         Done
+Domain Types                         Next
 ```
 
-Persistent Semantic Identity is intentionally being resolved before canonical
+Persistent Semantic Identity was intentionally resolved before canonical
 serialization and before further semantic identity categories proliferate. It
-will establish fork-preserved entity identity, coordination-free allocation,
-and persistent non-reuse as the foundation for later serialization, packages,
+establishes fork-preserved entity identity, coordination-free allocation, and
+persistent non-reuse as the foundation for later serialization, packages,
 semantic diff, and merge.
 
 The milestone is the ability to represent non-trivial multi-Function logic with conditions and local computation.
@@ -452,6 +454,7 @@ This release boundary does not imply that these capabilities will never be devel
 | Conditional Control Flow | Done |
 | Value Identity & Sequencing ADRs | Done |
 | Function Calls & Sequencing Foundations | Done |
+| Persistent Semantic Identity | Done |
 | Domain Types | Next |
 | Security Foundations | Planned |
 | Effects | Planned |

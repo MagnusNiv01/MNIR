@@ -1,9 +1,12 @@
 use std::any::TypeId;
 
-use mnir_core::{MnirProgram, ModuleId, MutationError, ProgramId, RevisionId, TransactionState};
+use mnir_core::{
+    AllocationCounterState, MnirProgram, ModuleId, MutationError, ProgramId, RevisionId,
+    TransactionState,
+};
 
 fn new_program() -> MnirProgram {
-    MnirProgram::new().expect("the process-local ProgramId allocator should have capacity")
+    MnirProgram::new().expect("collision-resistant program identity generation should succeed")
 }
 
 fn add_and_commit(program: &mut MnirProgram) -> ModuleId {
@@ -23,7 +26,10 @@ fn ar_core_001_empty_program_is_structurally_valid() {
     let program = new_program();
 
     assert_eq!(program.module_count(), 0);
-    assert_eq!(program.committed_module_id_count(), 0);
+    assert_eq!(
+        program.allocation_counter_state(),
+        AllocationCounterState::Available(1)
+    );
     assert!(program.validate_structure().is_ok());
 }
 
@@ -80,8 +86,8 @@ fn ar_core_005_removed_module_identity_is_not_reused() {
     transaction.commit().unwrap();
 
     assert_ne!(first, replacement);
-    assert!(program.is_module_id_committed(first));
-    assert!(program.is_module_id_committed(replacement));
+    assert_eq!(first.namespace_id(), replacement.namespace_id());
+    assert!(first.counter() < replacement.counter());
 }
 
 // AR-CORE-006; MNIR-CORE-014, MNIR-CORE-022 through MNIR-CORE-024.
@@ -180,7 +186,7 @@ fn ar_core_009_empty_no_op_commit_changes_only_revision() {
     let program_id = program.program_id();
     let source_revision = program.revision_id();
     let module_count = program.module_count();
-    let history_count = program.committed_module_id_count();
+    let allocation_state = program.allocation_counter_state();
 
     let mut transaction = program.begin_transaction();
     let committed = transaction.commit().unwrap();
@@ -194,7 +200,7 @@ fn ar_core_009_empty_no_op_commit_changes_only_revision() {
         module.presentation().documentation(),
         Some("stable documentation")
     );
-    assert_eq!(program.committed_module_id_count(), history_count);
+    assert_eq!(program.allocation_counter_state(), allocation_state);
 }
 
 // AR-CORE-010; MNIR-CORE-003, MNIR-CORE-043, MNIR-CORE-044.
@@ -270,18 +276,19 @@ fn ar_core_013_committed_module_id_remains_retired_across_revisions() {
     let replacement_id = add_and_commit(&mut program);
 
     assert_ne!(replacement_id, retired_id);
-    assert!(program.is_module_id_committed(retired_id));
-    assert_eq!(program.committed_module_id_count(), 2);
+    assert_eq!(replacement_id.namespace_id(), retired_id.namespace_id());
+    assert!(replacement_id.counter() > retired_id.counter());
 }
 
 // AR-CORE-014; MNIR-CORE-064 through MNIR-CORE-066.
 #[test]
 fn ar_core_014_provisional_identity_becomes_committed_only_on_commit() {
     let mut program = new_program();
-    assert_eq!(program.committed_module_id_count(), 0);
+    let initial_state = program.allocation_counter_state();
 
     let mut transaction = program.begin_transaction();
     let module_id = transaction.add_module().unwrap();
+    assert_ne!(transaction.allocation_counter_state(), initial_state);
     assert!(transaction.is_module_id_provisional(module_id));
     assert!(transaction.module(module_id).is_some());
 
@@ -290,7 +297,7 @@ fn ar_core_014_provisional_identity_becomes_committed_only_on_commit() {
     assert!(committed.module(module_id).is_some());
     drop(transaction);
 
-    assert!(program.is_module_id_committed(module_id));
+    assert!(program.module(module_id).is_some());
 }
 
 // AR-CORE-015; MNIR-CORE-009, MNIR-CORE-010, MNIR-CORE-058,
@@ -341,7 +348,10 @@ fn fork_preserves_module_ids_but_changes_program_identity() {
 
     assert_ne!(fork.program_id(), source.program_id());
     assert_eq!(fork.module(module_id).unwrap().id(), module_id);
-    assert!(fork.is_module_id_committed(module_id));
+    assert_ne!(
+        fork.allocation_namespace_id(),
+        source.allocation_namespace_id()
+    );
 }
 
 // MNIR-CORE-060.
@@ -370,10 +380,10 @@ fn committed_and_discarded_transactions_are_terminal() {
     ));
 }
 
-// MNIR-CORE-065. A created-then-removed Module does not remain in the
-// committed collection, but its successfully committed identity is retired.
+// MNIR-CORE-065 and MNIR-PSI-032. A created-then-removed Module does not
+// remain in the committed collection, but its issued identity is consumed.
 #[test]
-fn created_then_removed_module_id_enters_committed_history() {
+fn created_then_removed_module_id_is_consumed() {
     let mut program = new_program();
     let mut transaction = program.begin_transaction();
     let module_id = transaction.add_module().unwrap();
@@ -382,6 +392,8 @@ fn created_then_removed_module_id_enters_committed_history() {
     drop(transaction);
 
     assert_eq!(program.module_count(), 0);
-    assert!(program.is_module_id_committed(module_id));
-    assert_eq!(program.committed_module_id_count(), 1);
+    let replacement = add_and_commit(&mut program);
+    assert_ne!(replacement, module_id);
+    assert_eq!(replacement.namespace_id(), module_id.namespace_id());
+    assert!(replacement.counter() > module_id.counter());
 }

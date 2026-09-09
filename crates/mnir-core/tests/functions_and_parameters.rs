@@ -84,7 +84,7 @@ fn removed_function_identity_is_never_reused() {
     let (replacement, _) =
         add_committed_function(&mut program, module_id, IntrinsicType::Unit, vec![]);
     assert_ne!(removed, replacement);
-    assert!(program.is_function_id_committed(removed));
+    assert!(replacement.counter() > removed.counter());
 }
 
 // AR-FUNC-004 and AR-FUNC-005.
@@ -230,7 +230,7 @@ fn removed_parameters_and_function_descendants_are_never_reused() {
     assert!(
         removed_parameters
             .iter()
-            .all(|id| program.is_parameter_id_committed(*id))
+            .all(|id| program.parameter(*id).is_none())
     );
 }
 
@@ -334,14 +334,13 @@ fn provisional_identities_support_sequential_operations() {
     assert_eq!(parameter.intrinsic_type(), &IntrinsicType::Bool);
 }
 
-// MNIR-FUNC-041: failed and discarded transactions publish neither entity nor
-// provisional allocation history.
+// MNIR-FUNC-041 as superseded by MNIR-PSI-032/-033: failed and discarded
+// transactions publish no entities, while every successfully issued identity
+// remains consumed by the lineage allocator.
 #[test]
 fn failed_and_discarded_provisional_identities_do_not_become_committed() {
     let mut program = MnirProgram::new().unwrap();
     let module_id = add_committed_module(&mut program);
-    let initial_function_history = program.committed_function_id_count();
-    let initial_parameter_history = program.committed_parameter_id_count();
 
     let mut transaction = program.begin_transaction();
     let failed_function = transaction
@@ -357,8 +356,8 @@ fn failed_and_discarded_provisional_identities_do_not_become_committed() {
     );
     transaction.discard().unwrap();
     drop(transaction);
-    assert!(!program.is_function_id_committed(failed_function));
-    assert!(!program.is_parameter_id_committed(failed_parameter));
+    assert!(program.function(failed_function).is_none());
+    assert!(program.parameter(failed_parameter).is_none());
 
     let mut transaction = program.begin_transaction();
     let discarded_function = transaction
@@ -369,16 +368,10 @@ fn failed_and_discarded_provisional_identities_do_not_become_committed() {
         .unwrap();
     transaction.discard().unwrap();
     drop(transaction);
-    assert!(!program.is_function_id_committed(discarded_function));
-    assert!(!program.is_parameter_id_committed(discarded_parameter));
-    assert_eq!(
-        program.committed_function_id_count(),
-        initial_function_history
-    );
-    assert_eq!(
-        program.committed_parameter_id_count(),
-        initial_parameter_history
-    );
+    assert!(program.function(discarded_function).is_none());
+    assert!(program.parameter(discarded_parameter).is_none());
+    assert!(discarded_function.counter() > failed_parameter.counter());
+    assert!(discarded_parameter.counter() > discarded_function.counter());
 }
 
 // AR-FUNC-016.
@@ -509,7 +502,7 @@ fn duplicate_presentation_names_are_allowed() {
 
 // AR-FUNC-021 and AR-FUNC-022.
 #[test]
-fn snapshots_and_forks_preserve_contents_and_retire_preserved_raw_ids() {
+fn snapshots_and_forks_preserve_contents_and_inherited_persistent_ids() {
     let mut program = MnirProgram::new().unwrap();
     let module_id = add_committed_module(&mut program);
     let (function_id, parameters) = add_committed_function(
@@ -596,10 +589,6 @@ fn module_removal_cascades_to_committed_functions_and_parameters() {
     assert!(committed.function(second).is_none());
     assert!(committed.parameter(first_parameters[0]).is_none());
     assert!(committed.parameter(second_parameters[0]).is_none());
-    assert!(program.is_function_id_committed(first));
-    assert!(program.is_function_id_committed(second));
-    assert!(program.is_parameter_id_committed(first_parameters[0]));
-    assert!(program.is_parameter_id_committed(second_parameters[0]));
 
     let replacement_module = add_committed_module(&mut program);
     let (replacement, replacement_parameters) = add_committed_function(
@@ -705,7 +694,7 @@ fn module_removal_preserves_unrelated_module_signature_state() {
 
 // AR-FUNC-030.
 #[test]
-fn create_then_remove_commits_function_and_parameter_allocation_history() {
+fn create_then_remove_consumes_function_and_parameter_identities() {
     let mut program = MnirProgram::new().unwrap();
     let module_id = add_committed_module(&mut program);
     let source_revision = program.revision_id();
@@ -722,8 +711,6 @@ fn create_then_remove_commits_function_and_parameter_allocation_history() {
     assert_ne!(program.revision_id(), source_revision);
     assert!(program.function(removed_function).is_none());
     assert!(program.parameter(removed_parameter).is_none());
-    assert!(program.is_function_id_committed(removed_function));
-    assert!(program.is_parameter_id_committed(removed_parameter));
 
     let (replacement, replacement_parameters) = add_committed_function(
         &mut program,
@@ -736,9 +723,9 @@ fn create_then_remove_commits_function_and_parameter_allocation_history() {
 }
 
 // MNIR-FUNC-080: provisional descendants are removed transitively through
-// Module removal, while all provisional identities enter committed history.
+// Module removal, while every provisional identity remains consumed.
 #[test]
-fn provisional_descendants_removed_with_module_are_committed_to_history() {
+fn provisional_descendants_removed_with_module_remain_consumed() {
     let mut program = MnirProgram::new().unwrap();
     let mut transaction = program.begin_transaction();
     let removed_module = transaction.add_module().unwrap();
@@ -754,9 +741,6 @@ fn provisional_descendants_removed_with_module_are_committed_to_history() {
     assert!(program.module(removed_module).is_none());
     assert!(program.function(removed_function).is_none());
     assert!(program.parameter(removed_parameter).is_none());
-    assert!(program.is_module_id_committed(removed_module));
-    assert!(program.is_function_id_committed(removed_function));
-    assert!(program.is_parameter_id_committed(removed_parameter));
 
     let module_id = add_committed_module(&mut program);
     let (function_id, parameters) = add_committed_function(

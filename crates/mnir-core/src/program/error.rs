@@ -12,14 +12,11 @@ pub enum StructuralError {
         collection_id: ModuleId,
         module_id: ModuleId,
     },
-    ModuleIdentityNotCommitted(ModuleId),
     FunctionIdentityMismatch {
         collection_id: FunctionId,
         function_id: FunctionId,
     },
-    FunctionIdentityNotCommitted(FunctionId),
     DuplicateFunctionIdentity(FunctionId),
-    ParameterIdentityNotCommitted(ParameterId),
     DuplicateParameterIdentity(ParameterId),
     FunctionBodyHasNoBlocks(FunctionId),
     EntryBlockNotInBody {
@@ -30,13 +27,11 @@ pub enum StructuralError {
         collection_id: BlockId,
         block_id: BlockId,
     },
-    BlockIdentityNotCommitted(BlockId),
     DuplicateBlockIdentity(BlockId),
     ExpressionIdentityMismatch {
         collection_id: ExpressionId,
         expression_id: ExpressionId,
     },
-    ExpressionIdentityNotCommitted(ExpressionId),
     DuplicateExpressionIdentity(ExpressionId),
     UnterminatedBlock(BlockId),
     ReturnExpressionNotInBlock {
@@ -114,12 +109,6 @@ impl fmt::Display for StructuralError {
                 formatter,
                 "module collection identity {collection_id:?} does not match contained identity {module_id:?}"
             ),
-            Self::ModuleIdentityNotCommitted(id) => {
-                write!(
-                    formatter,
-                    "module identity {id:?} is not in committed history"
-                )
-            }
             Self::FunctionIdentityMismatch {
                 collection_id,
                 function_id,
@@ -127,20 +116,8 @@ impl fmt::Display for StructuralError {
                 formatter,
                 "function collection identity {collection_id:?} does not match contained identity {function_id:?}"
             ),
-            Self::FunctionIdentityNotCommitted(id) => {
-                write!(
-                    formatter,
-                    "function identity {id:?} is not in committed history"
-                )
-            }
             Self::DuplicateFunctionIdentity(id) => {
                 write!(formatter, "function identity {id:?} occurs more than once")
-            }
-            Self::ParameterIdentityNotCommitted(id) => {
-                write!(
-                    formatter,
-                    "parameter identity {id:?} is not in committed history"
-                )
             }
             Self::DuplicateParameterIdentity(id) => {
                 write!(formatter, "parameter identity {id:?} occurs more than once")
@@ -162,12 +139,6 @@ impl fmt::Display for StructuralError {
                 formatter,
                 "block collection identity {collection_id:?} does not match contained identity {block_id:?}"
             ),
-            Self::BlockIdentityNotCommitted(id) => {
-                write!(
-                    formatter,
-                    "block identity {id:?} is not in committed history"
-                )
-            }
             Self::DuplicateBlockIdentity(id) => {
                 write!(formatter, "block identity {id:?} occurs more than once")
             }
@@ -177,10 +148,6 @@ impl fmt::Display for StructuralError {
             } => write!(
                 formatter,
                 "expression collection identity {collection_id:?} does not match contained identity {expression_id:?}"
-            ),
-            Self::ExpressionIdentityNotCommitted(id) => write!(
-                formatter,
-                "expression identity {id:?} is not in committed history"
             ),
             Self::DuplicateExpressionIdentity(id) => {
                 write!(
@@ -320,6 +287,8 @@ pub enum TransactionState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MutationError {
     IdentifierExhausted(IdentifierCategory),
+    IdentityGenerationFailed(IdentifierCategory),
+    IdentityCollision(IdentifierCategory),
     TransactionNotActive(TransactionState),
     UnknownModule(ModuleId),
     UnknownFunction(FunctionId),
@@ -355,6 +324,15 @@ impl fmt::Display for MutationError {
         match self {
             Self::IdentifierExhausted(category) => {
                 write!(formatter, "{category:?} identifier space is exhausted")
+            }
+            Self::IdentityGenerationFailed(category) => {
+                write!(formatter, "failed to generate {category:?} identity")
+            }
+            Self::IdentityCollision(category) => {
+                write!(
+                    formatter,
+                    "could not avoid detected {category:?} identity collision"
+                )
             }
             Self::TransactionNotActive(state) => {
                 write!(formatter, "transaction is not active: {state:?}")

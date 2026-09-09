@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::IntrinsicType;
 use crate::ids::{
-    BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, ProgramId,
-    RevisionId,
+    AllocationCounterState, AllocationNamespaceId, BlockId, ExpressionId, FunctionId,
+    IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId,
 };
 use crate::presentation::PresentationMetadata;
 
@@ -13,7 +12,7 @@ use super::body::{Block, Expression, ExpressionKind, FunctionBody};
 use super::error::{ExpressionTypeError, MutationError, StructuralError};
 use super::validation::validate_revision_state;
 
-static NEXT_PROGRAM_ID: AtomicU64 = AtomicU64::new(1);
+const IDENTITY_GENERATION_ATTEMPTS: usize = 32;
 
 /// One typed entry in a Function's ordered Parameter sequence
 /// (`MNIR-FUNC-020`, `MNIR-FUNC-025`).
@@ -189,11 +188,6 @@ impl Module {
 pub(super) struct RevisionState {
     pub(super) revision_id: RevisionId,
     pub(super) modules: HashMap<ModuleId, Module>,
-    pub(super) committed_module_ids: HashSet<ModuleId>,
-    pub(super) committed_function_ids: HashSet<FunctionId>,
-    pub(super) committed_parameter_ids: HashSet<ParameterId>,
-    pub(super) committed_block_ids: HashSet<BlockId>,
-    pub(super) committed_expression_ids: HashSet<ExpressionId>,
 }
 
 impl RevisionState {
@@ -202,6 +196,57 @@ impl RevisionState {
             .iter()
             .map(|(&id, module)| (id, module.copied()))
             .collect()
+    }
+}
+
+/// The one active allocation authority owned by a mutable Program lineage.
+///
+/// This state is deliberately outside [`RevisionState`]: successful issuance
+/// advances it even when semantic transaction state is later discarded
+/// (`MNIR-PSI-022` through `MNIR-PSI-024`, `MNIR-PSI-046` through
+/// `MNIR-PSI-051`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct AllocationAuthorityState {
+    namespace_id: AllocationNamespaceId,
+    counter_state: AllocationCounterState,
+}
+
+impl AllocationAuthorityState {
+    const fn new(namespace_id: AllocationNamespaceId) -> Self {
+        Self {
+            namespace_id,
+            counter_state: AllocationCounterState::Available(1),
+        }
+    }
+
+    pub(super) const fn namespace_id(self) -> AllocationNamespaceId {
+        self.namespace_id
+    }
+
+    pub(super) const fn counter_state(self) -> AllocationCounterState {
+        self.counter_state
+    }
+
+    /// Atomically reserves the current counter and advances authoritative
+    /// in-memory allocator state (`MNIR-PSI-032` through `MNIR-PSI-037`).
+    pub(super) fn reserve(
+        &mut self,
+        category: IdentifierCategory,
+    ) -> Result<(AllocationNamespaceId, u64), MutationError> {
+        let AllocationCounterState::Available(counter) = self.counter_state else {
+            return Err(MutationError::IdentifierExhausted(category));
+        };
+
+        self.counter_state = match counter.checked_add(1) {
+            Some(next_counter) => AllocationCounterState::Available(next_counter),
+            None => AllocationCounterState::Exhausted,
+        };
+        Ok((self.namespace_id, counter))
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_counter_state_for_test(&mut self, counter_state: AllocationCounterState) {
+        self.counter_state = counter_state;
     }
 }
 
@@ -222,6 +267,7 @@ impl RevisionState {
 pub struct ProgramSnapshot {
     pub(super) program_id: ProgramId,
     pub(super) state: Arc<RevisionState>,
+    pub(super) allocation_authority: AllocationAuthorityState,
 }
 
 impl ProgramSnapshot {
@@ -233,6 +279,19 @@ impl ProgramSnapshot {
     #[must_use]
     pub fn revision_id(&self) -> RevisionId {
         self.state.revision_id
+    }
+
+    /// Returns the namespace observed when this immutable snapshot was made.
+    #[must_use]
+    pub const fn allocation_namespace_id(&self) -> AllocationNamespaceId {
+        self.allocation_authority.namespace_id()
+    }
+
+    /// Returns the immutable counter-state observation paired with this
+    /// snapshot (`MNIR-PSI-056`).
+    #[must_use]
+    pub const fn allocation_counter_state(&self) -> AllocationCounterState {
+        self.allocation_authority.counter_state()
     }
 
     #[must_use]
@@ -288,53 +347,23 @@ impl ProgramSnapshot {
 
     /// Creates a distinct Program lineage from this snapshot.
     ///
-    /// This implementation preserves the raw Module ID values while giving
-    /// the fork a new Program ID (`MNIR-CORE-010`, `MNIR-CORE-017`).
+    /// Inherited persistent entity identities and references are preserved
+    /// exactly. The fork receives a fresh Program ID and allocation namespace
+    /// (`MNIR-PSI-061` through `MNIR-PSI-070`).
     pub fn fork(&self) -> Result<MnirProgram, MutationError> {
-        let program_id = allocate_program_id()?;
+        let program_id = allocate_program_id(&HashSet::from([self.program_id.0]))?;
         let modules = self.state.copied_modules();
-        let committed_module_ids = modules.keys().copied().collect();
-        let committed_function_ids = modules
-            .values()
-            .flat_map(|module| module.functions.keys().copied())
-            .collect();
-        let committed_parameter_ids = modules
-            .values()
-            .flat_map(|module| module.functions.values())
-            .flat_map(|function| function.parameters.iter().map(Parameter::id))
-            .collect();
-        let committed_block_ids = modules
-            .values()
-            .flat_map(|module| module.functions.values())
-            .filter_map(Function::body)
-            .flat_map(FunctionBody::blocks)
-            .map(Block::id)
-            .collect();
-        let committed_expression_ids = modules
-            .values()
-            .flat_map(|module| module.functions.values())
-            .filter_map(Function::body)
-            .flat_map(FunctionBody::blocks)
-            .flat_map(|block| block.expressions().map(Expression::id))
-            .collect();
+        let known_namespaces = collect_present_namespaces(&modules, self.allocation_namespace_id());
+        let namespace_id = allocate_namespace_id(&known_namespaces)?;
 
         Ok(MnirProgram {
             program_id,
             head: Arc::new(RevisionState {
                 revision_id: RevisionId(1),
                 modules,
-                committed_module_ids,
-                committed_function_ids,
-                committed_parameter_ids,
-                committed_block_ids,
-                committed_expression_ids,
             }),
             next_revision_raw: Some(2),
-            next_module_raw: Some(1),
-            next_function_raw: Some(1),
-            next_parameter_raw: Some(1),
-            next_block_raw: Some(1),
-            next_expression_raw: Some(1),
+            allocation_authority: AllocationAuthorityState::new(namespace_id),
         })
     }
 }
@@ -345,34 +374,23 @@ pub struct MnirProgram {
     pub(super) program_id: ProgramId,
     pub(super) head: Arc<RevisionState>,
     pub(super) next_revision_raw: Option<u64>,
-    pub(super) next_module_raw: Option<u64>,
-    pub(super) next_function_raw: Option<u64>,
-    pub(super) next_parameter_raw: Option<u64>,
-    pub(super) next_block_raw: Option<u64>,
-    pub(super) next_expression_raw: Option<u64>,
+    pub(super) allocation_authority: AllocationAuthorityState,
 }
 
 impl MnirProgram {
     /// Constructs an empty, structurally valid Program and its initial
     /// committed revision (`AR-CORE-001`).
     pub fn new() -> Result<Self, MutationError> {
+        let program_id = allocate_program_id(&HashSet::new())?;
+        let namespace_id = allocate_namespace_id(&HashSet::new())?;
         Ok(Self {
-            program_id: allocate_program_id()?,
+            program_id,
             head: Arc::new(RevisionState {
                 revision_id: RevisionId(1),
                 modules: HashMap::new(),
-                committed_module_ids: HashSet::new(),
-                committed_function_ids: HashSet::new(),
-                committed_parameter_ids: HashSet::new(),
-                committed_block_ids: HashSet::new(),
-                committed_expression_ids: HashSet::new(),
             }),
             next_revision_raw: Some(2),
-            next_module_raw: Some(1),
-            next_function_raw: Some(1),
-            next_parameter_raw: Some(1),
-            next_block_raw: Some(1),
-            next_expression_raw: Some(1),
+            allocation_authority: AllocationAuthorityState::new(namespace_id),
         })
     }
 
@@ -384,6 +402,16 @@ impl MnirProgram {
     #[must_use]
     pub fn revision_id(&self) -> RevisionId {
         self.head.revision_id
+    }
+
+    #[must_use]
+    pub const fn allocation_namespace_id(&self) -> AllocationNamespaceId {
+        self.allocation_authority.namespace_id()
+    }
+
+    #[must_use]
+    pub const fn allocation_counter_state(&self) -> AllocationCounterState {
+        self.allocation_authority.counter_state()
     }
 
     #[must_use]
@@ -425,60 +453,11 @@ impl MnirProgram {
     }
 
     #[must_use]
-    pub fn committed_module_id_count(&self) -> usize {
-        self.head.committed_module_ids.len()
-    }
-
-    #[must_use]
-    pub fn is_module_id_committed(&self, id: ModuleId) -> bool {
-        self.head.committed_module_ids.contains(&id)
-    }
-
-    #[must_use]
-    pub fn committed_function_id_count(&self) -> usize {
-        self.head.committed_function_ids.len()
-    }
-
-    #[must_use]
-    pub fn is_function_id_committed(&self, id: FunctionId) -> bool {
-        self.head.committed_function_ids.contains(&id)
-    }
-
-    #[must_use]
-    pub fn committed_parameter_id_count(&self) -> usize {
-        self.head.committed_parameter_ids.len()
-    }
-
-    #[must_use]
-    pub fn is_parameter_id_committed(&self, id: ParameterId) -> bool {
-        self.head.committed_parameter_ids.contains(&id)
-    }
-
-    #[must_use]
-    pub fn committed_block_id_count(&self) -> usize {
-        self.head.committed_block_ids.len()
-    }
-
-    #[must_use]
-    pub fn is_block_id_committed(&self, id: BlockId) -> bool {
-        self.head.committed_block_ids.contains(&id)
-    }
-
-    #[must_use]
-    pub fn committed_expression_id_count(&self) -> usize {
-        self.head.committed_expression_ids.len()
-    }
-
-    #[must_use]
-    pub fn is_expression_id_committed(&self, id: ExpressionId) -> bool {
-        self.head.committed_expression_ids.contains(&id)
-    }
-
-    #[must_use]
     pub fn snapshot(&self) -> ProgramSnapshot {
         ProgramSnapshot {
             program_id: self.program_id,
             state: Arc::clone(&self.head),
+            allocation_authority: self.allocation_authority,
         }
     }
 
@@ -732,11 +711,111 @@ fn copy_expression_type_result(
     }
 }
 
-fn allocate_program_id() -> Result<ProgramId, MutationError> {
-    NEXT_PROGRAM_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-            current.checked_add(1)
+fn allocate_program_id(known: &HashSet<[u8; 16]>) -> Result<ProgramId, MutationError> {
+    allocate_random_identity(IdentifierCategory::Program, known).map(ProgramId)
+}
+
+fn allocate_namespace_id(
+    known: &HashSet<[u8; 16]>,
+) -> Result<AllocationNamespaceId, MutationError> {
+    allocate_random_identity(IdentifierCategory::AllocationNamespace, known)
+        .map(AllocationNamespaceId)
+}
+
+fn allocate_random_identity(
+    category: IdentifierCategory,
+    known: &HashSet<[u8; 16]>,
+) -> Result<[u8; 16], MutationError> {
+    allocate_identity_with(category, known, || {
+        let mut bytes = [0_u8; 16];
+        getrandom::fill(&mut bytes)
+            .map_err(|_| MutationError::IdentityGenerationFailed(category))?;
+        Ok(bytes)
+    })
+}
+
+fn allocate_identity_with(
+    category: IdentifierCategory,
+    known: &HashSet<[u8; 16]>,
+    mut generate: impl FnMut() -> Result<[u8; 16], MutationError>,
+) -> Result<[u8; 16], MutationError> {
+    for _ in 0..IDENTITY_GENERATION_ATTEMPTS {
+        let candidate = generate()?;
+        if !known.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(MutationError::IdentityCollision(category))
+}
+
+fn collect_present_namespaces(
+    modules: &HashMap<ModuleId, Module>,
+    active_namespace: AllocationNamespaceId,
+) -> HashSet<[u8; 16]> {
+    let mut namespaces = HashSet::from([active_namespace.0]);
+    for module in modules.values() {
+        namespaces.insert(module.id.namespace_id().0);
+        for function in module.functions.values() {
+            namespaces.insert(function.id.namespace_id().0);
+            for parameter in &function.parameters {
+                namespaces.insert(parameter.id.namespace_id().0);
+            }
+            if let Some(body) = function.body() {
+                for block in body.blocks() {
+                    namespaces.insert(block.id.namespace_id().0);
+                    for expression in block.expressions() {
+                        namespaces.insert(expression.id.namespace_id().0);
+                    }
+                }
+            }
+        }
+    }
+    namespaces
+}
+
+#[cfg(test)]
+mod persistent_identity_tests {
+    use std::collections::{HashSet, VecDeque};
+
+    use crate::{IdentifierCategory, MutationError};
+
+    use super::{IDENTITY_GENERATION_ATTEMPTS, allocate_identity_with};
+
+    // AR-PSI-006; MNIR-PSI-013/-021 require detected collisions to be
+    // handled rather than accepted as shared identity or authority.
+    #[test]
+    fn detected_random_identity_collision_is_retried() {
+        let collision = [7_u8; 16];
+        let distinct = [8_u8; 16];
+        let known = HashSet::from([collision]);
+        let mut candidates = VecDeque::from([collision, distinct]);
+
+        let allocated =
+            allocate_identity_with(IdentifierCategory::AllocationNamespace, &known, || {
+                Ok(candidates.pop_front().unwrap())
+            })
+            .unwrap();
+
+        assert_eq!(allocated, distinct);
+    }
+
+    // AR-PSI-006; bounded retry exhaustion is a typed construction failure.
+    #[test]
+    fn repeated_detected_identity_collision_is_rejected() {
+        let collision = [7_u8; 16];
+        let known = HashSet::from([collision]);
+        let mut attempts = 0;
+
+        let error = allocate_identity_with(IdentifierCategory::Program, &known, || {
+            attempts += 1;
+            Ok(collision)
         })
-        .map(ProgramId)
-        .map_err(|_| MutationError::IdentifierExhausted(IdentifierCategory::Program))
+        .unwrap_err();
+
+        assert_eq!(attempts, IDENTITY_GENERATION_ATTEMPTS);
+        assert_eq!(
+            error,
+            MutationError::IdentityCollision(IdentifierCategory::Program)
+        );
+    }
 }

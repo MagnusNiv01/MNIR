@@ -216,7 +216,6 @@ fn target_type_is_live_and_dangling_targets_are_inspectable_and_repairable() {
     tx.commit().unwrap();
     assert!(program.function(caller).unwrap().body().is_none());
     assert!(program.expression(call).is_none());
-    assert!(program.is_expression_id_committed(call));
 
     let revision = module_removal_case.revision_id();
     let mut tx = module_removal_case.begin_transaction();
@@ -375,7 +374,6 @@ fn effects_are_block_local_and_removal_cascades_retire_call_identity() {
     tx.commit().unwrap();
     assert!(program.block(successor).is_none());
     assert!(program.expression(successor_call).is_none());
-    assert!(program.is_expression_id_committed(successor_call));
     assert!(matches!(
         program.block(entry).unwrap().terminator(),
         Some(Terminator::Return { .. })
@@ -385,5 +383,4 @@ fn effects_are_block_local_and_removal_cascades_retire_call_identity() {
     tx.remove_function_body(caller).unwrap();
     tx.commit().unwrap();
     assert!(program.expression(condition_call).is_none());
-    assert!(program.is_expression_id_committed(condition_call));
 }

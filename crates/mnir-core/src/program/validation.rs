@@ -1,30 +1,16 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::ids::{BlockId, ExpressionId, FunctionId, ModuleId, ParameterId};
+use crate::ids::{BlockId, ExpressionId, FunctionId, ModuleId};
 
 use super::body::{Block, ExpressionKind, Terminator};
 use super::error::StructuralError;
 use super::model::{Module, RevisionState, find_function};
 
 pub(super) fn validate_revision_state(state: &RevisionState) -> Result<(), StructuralError> {
-    validate_modules(
-        &state.modules,
-        &state.committed_module_ids,
-        &state.committed_function_ids,
-        &state.committed_parameter_ids,
-        &state.committed_block_ids,
-        &state.committed_expression_ids,
-    )
+    validate_modules(&state.modules)
 }
 
-pub(super) fn validate_modules(
-    modules: &HashMap<ModuleId, Module>,
-    committed_module_ids: &HashSet<ModuleId>,
-    committed_function_ids: &HashSet<FunctionId>,
-    committed_parameter_ids: &HashSet<ParameterId>,
-    committed_block_ids: &HashSet<BlockId>,
-    committed_expression_ids: &HashSet<ExpressionId>,
-) -> Result<(), StructuralError> {
+pub(super) fn validate_modules(modules: &HashMap<ModuleId, Module>) -> Result<(), StructuralError> {
     let mut seen_function_ids = HashSet::new();
     let mut seen_parameter_ids = HashSet::new();
     let mut seen_block_ids = HashSet::new();
@@ -38,10 +24,6 @@ pub(super) fn validate_modules(
             });
         }
 
-        if !committed_module_ids.contains(&collection_id) {
-            return Err(StructuralError::ModuleIdentityNotCommitted(collection_id));
-        }
-
         for (&function_collection_id, function) in &module.functions {
             if function_collection_id != function.id {
                 return Err(StructuralError::FunctionIdentityMismatch {
@@ -49,17 +31,11 @@ pub(super) fn validate_modules(
                     function_id: function.id,
                 });
             }
-            if !committed_function_ids.contains(&function.id) {
-                return Err(StructuralError::FunctionIdentityNotCommitted(function.id));
-            }
             if !seen_function_ids.insert(function.id) {
                 return Err(StructuralError::DuplicateFunctionIdentity(function.id));
             }
 
             for parameter in &function.parameters {
-                if !committed_parameter_ids.contains(&parameter.id) {
-                    return Err(StructuralError::ParameterIdentityNotCommitted(parameter.id));
-                }
                 if !seen_parameter_ids.insert(parameter.id) {
                     return Err(StructuralError::DuplicateParameterIdentity(parameter.id));
                 }
@@ -85,20 +61,11 @@ pub(super) fn validate_modules(
                         block_id: block.id,
                     });
                 }
-                if !committed_block_ids.contains(&block.id) {
-                    return Err(StructuralError::BlockIdentityNotCommitted(block.id));
-                }
                 if !seen_block_ids.insert(block.id) {
                     return Err(StructuralError::DuplicateBlockIdentity(block.id));
                 }
 
-                validate_block_expressions(
-                    modules,
-                    function,
-                    block,
-                    committed_expression_ids,
-                    &mut seen_expression_ids,
-                )?;
+                validate_block_expressions(modules, function, block, &mut seen_expression_ids)?;
                 validate_acyclic_expression_dependencies(block)?;
                 validate_effect_sequence(block)?;
 
@@ -146,7 +113,6 @@ fn validate_block_expressions(
     modules: &HashMap<ModuleId, Module>,
     function: &super::model::Function,
     block: &Block,
-    committed_expression_ids: &HashSet<ExpressionId>,
     seen_expression_ids: &mut HashSet<ExpressionId>,
 ) -> Result<(), StructuralError> {
     for (&collection_id, expression) in &block.expressions {
@@ -155,11 +121,6 @@ fn validate_block_expressions(
                 collection_id,
                 expression_id: expression.id,
             });
-        }
-        if !committed_expression_ids.contains(&expression.id) {
-            return Err(StructuralError::ExpressionIdentityNotCommitted(
-                expression.id,
-            ));
         }
         if !seen_expression_ids.insert(expression.id) {
             return Err(StructuralError::DuplicateExpressionIdentity(expression.id));
@@ -428,7 +389,8 @@ mod tests {
             .working_modules_mut()
             .remove(&module_id)
             .unwrap();
-        let mismatched_collection_id = ModuleId(module_id.0 + 1);
+        let mismatched_collection_id =
+            ModuleId::new(module_id.namespace_id(), module_id.counter() + 1);
         transaction
             .working_modules_mut()
             .insert(mismatched_collection_id, module);
@@ -468,7 +430,8 @@ mod tests {
             .functions
             .remove(&function_id)
             .unwrap();
-        let mismatched_collection_id = FunctionId(function_id.0 + 1);
+        let mismatched_collection_id =
+            FunctionId::new(function_id.namespace_id(), function_id.counter() + 1);
         transaction
             .working_modules_mut()
             .get_mut(&module_id)
@@ -598,7 +561,10 @@ mod tests {
         let source_revision = program.revision_id();
 
         let mut transaction = program.begin_transaction();
-        let corrupt_expression_id = ExpressionId(expression_id.0 + 1_000);
+        let corrupt_expression_id = ExpressionId::new(
+            expression_id.namespace_id(),
+            expression_id.counter() + 1_000,
+        );
         transaction
             .working_modules_mut()
             .get_mut(&module_id)
@@ -700,7 +666,10 @@ mod tests {
         let block_id = transaction.create_function_body(function_id).unwrap();
         let expression_id = transaction.add_int32_literal(block_id, 1).unwrap();
         transaction.set_return(block_id, expression_id).unwrap();
-        let missing_operand = ExpressionId(expression_id.0 + 1_000);
+        let missing_operand = ExpressionId::new(
+            expression_id.namespace_id(),
+            expression_id.counter() + 1_000,
+        );
         transaction
             .working_modules_mut()
             .get_mut(&module_id)
@@ -803,7 +772,10 @@ mod tests {
         let block_id = transaction.create_function_body(function_id).unwrap();
         let expression_id = transaction.add_bool_literal(block_id, true).unwrap();
         transaction.set_return(block_id, expression_id).unwrap();
-        let missing_operand = ExpressionId(expression_id.0 + 1_000);
+        let missing_operand = ExpressionId::new(
+            expression_id.namespace_id(),
+            expression_id.counter() + 1_000,
+        );
         transaction
             .working_modules_mut()
             .get_mut(&module_id)
@@ -857,7 +829,7 @@ mod tests {
         let revision = program.revision_id();
 
         let mut transaction = program.begin_transaction();
-        let missing_entry = BlockId(entry.0 + 10_000);
+        let missing_entry = BlockId::new(entry.namespace_id(), entry.counter() + 10_000);
         transaction
             .working_modules_mut()
             .get_mut(&module_id)
@@ -919,7 +891,8 @@ mod tests {
         }
 
         let (mut program, module, function, entry, target, condition) = program_with_branch();
-        let missing_expression = ExpressionId(condition.0 + 10_000);
+        let missing_expression =
+            ExpressionId::new(condition.namespace_id(), condition.counter() + 10_000);
         let mut transaction = program.begin_transaction();
         transaction
             .working_modules_mut()
@@ -948,7 +921,7 @@ mod tests {
         );
 
         let (mut program, module, function, entry, _, condition) = program_with_branch();
-        let missing_target = BlockId(entry.0 + 10_000);
+        let missing_target = BlockId::new(entry.namespace_id(), entry.counter() + 10_000);
         let mut transaction = program.begin_transaction();
         transaction
             .working_modules_mut()

@@ -1,10 +1,9 @@
-use std::fmt;
-
-/// The identifier categories defined by Program Model 0.1.
+/// The identifier categories currently defined by MNIR.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdentifierCategory {
     Program,
     Revision,
+    AllocationNamespace,
     Module,
     Function,
     Parameter,
@@ -14,94 +13,119 @@ pub enum IdentifierCategory {
 
 /// Opaque identity of one Program lineage.
 ///
-/// Consumers may compare this value for equality but must not infer semantic
-/// meaning from its internal representation (`MNIR-CORE-006`).
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct ProgramId(pub(crate) u64);
+/// Program identity is collision-resistant and independent of every contained
+/// semantic entity identity (`MNIR-PSI-018` through `MNIR-PSI-021`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ProgramId(pub(crate) [u8; 16]);
 
 /// Opaque identity of one committed revision within a Program lineage.
 ///
 /// Consumers must not infer chronological ordering from its internal
 /// representation (`MNIR-CORE-029`).
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RevisionId(pub(crate) u64);
 
-/// Opaque identity of one Module within a Program lineage.
+/// Collision-resistant minting domain for persistent semantic entity IDs.
 ///
-/// The Rust type is intentionally distinct from [`ProgramId`] and
-/// [`RevisionId`] (`MNIR-CORE-005`).
-///
-/// ```compile_fail
-/// use mnir_core::{MnirProgram, ModuleId};
-///
-/// let program = MnirProgram::new().unwrap();
-/// let _: ModuleId = program.program_id();
-/// ```
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct ModuleId(pub(crate) u64);
+/// This identity is distinct from Program lineage identity and does not imply
+/// trust, provenance, or allocation authority (`MNIR-PSI-005`,
+/// `MNIR-PSI-012` through `MNIR-PSI-017`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct AllocationNamespaceId(pub(crate) [u8; 16]);
 
-/// Opaque identity of one Function within a Program lineage.
-///
-/// Function identities form a category distinct from every other identity
-/// category (`MNIR-FUNC-001`, `MNIR-FUNC-003`).
-///
-/// ```compile_fail
-/// use mnir_core::{FunctionId, MnirProgram, ParameterId};
-///
-/// fn require_parameter(_: ParameterId) {}
-///
-/// let mut program = MnirProgram::new().unwrap();
-/// let mut transaction = program.begin_transaction();
-/// let module_id = transaction.add_module().unwrap();
-/// let function_id: FunctionId = transaction
-///     .add_function(module_id, mnir_core::IntrinsicType::Unit)
-///     .unwrap();
-/// require_parameter(function_id);
-/// ```
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct FunctionId(pub(crate) u64);
+/// Read-only state of a lineage's single active entity counter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AllocationCounterState {
+    Available(u64),
+    Exhausted,
+}
 
-/// Opaque identity of one Parameter within a Program lineage.
-///
-/// Parameter identities form a category distinct from every other identity
-/// category (`MNIR-FUNC-010`, `MNIR-FUNC-012`).
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct ParameterId(pub(crate) u64);
+macro_rules! persistent_entity_id {
+    ($(#[$meta:meta])* $type:ident) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub struct $type {
+            namespace_id: AllocationNamespaceId,
+            counter: u64,
+        }
 
-/// Opaque identity of one Block within a Program lineage.
-///
-/// ```compile_fail
-/// use mnir_core::{BlockId, ExpressionId};
-///
-/// fn require_expression(_: ExpressionId) {}
-/// fn demonstrate(block_id: BlockId) {
-///     require_expression(block_id);
-/// }
-/// ```
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct BlockId(pub(crate) u64);
+        impl $type {
+            pub(crate) const fn new(
+                namespace_id: AllocationNamespaceId,
+                counter: u64,
+            ) -> Self {
+                Self {
+                    namespace_id,
+                    counter,
+                }
+            }
 
-/// Opaque identity of one Expression within a Program lineage.
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct ExpressionId(pub(crate) u64);
+            /// Returns the persistent allocation namespace component.
+            #[must_use]
+            pub const fn namespace_id(self) -> AllocationNamespaceId {
+                self.namespace_id
+            }
 
-macro_rules! impl_opaque_debug {
-    ($type:ident) => {
-        impl fmt::Debug for $type {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter
-                    .debug_tuple(stringify!($type))
-                    .field(&self.0)
-                    .finish()
+            /// Returns the persistent monotonic counter component.
+            #[must_use]
+            pub const fn counter(self) -> u64 {
+                self.counter
             }
         }
     };
 }
 
-impl_opaque_debug!(ProgramId);
-impl_opaque_debug!(RevisionId);
-impl_opaque_debug!(ModuleId);
-impl_opaque_debug!(FunctionId);
-impl_opaque_debug!(ParameterId);
-impl_opaque_debug!(BlockId);
-impl_opaque_debug!(ExpressionId);
+persistent_entity_id!(
+    /// Persistent typed identity of one Module.
+    ///
+    /// ```compile_fail
+    /// use mnir_core::{MnirProgram, ModuleId};
+    ///
+    /// let program = MnirProgram::new().unwrap();
+    /// let _: ModuleId = program.program_id();
+    /// ```
+    ModuleId
+);
+
+persistent_entity_id!(
+    /// Persistent typed identity of one Function.
+    ///
+    /// ```compile_fail
+    /// use mnir_core::{FunctionId, MnirProgram, ParameterId};
+    ///
+    /// fn require_parameter(_: ParameterId) {}
+    ///
+    /// let mut program = MnirProgram::new().unwrap();
+    /// let mut transaction = program.begin_transaction();
+    /// let module_id = transaction.add_module().unwrap();
+    /// let function_id: FunctionId = transaction
+    ///     .add_function(module_id, mnir_core::IntrinsicType::Unit)
+    ///     .unwrap();
+    /// require_parameter(function_id);
+    /// ```
+    FunctionId
+);
+
+persistent_entity_id!(
+    /// Persistent typed identity of one Parameter.
+    ParameterId
+);
+
+persistent_entity_id!(
+    /// Persistent typed identity of one Block.
+    ///
+    /// ```compile_fail
+    /// use mnir_core::{BlockId, ExpressionId};
+    ///
+    /// fn require_expression(_: ExpressionId) {}
+    /// fn demonstrate(block_id: BlockId) {
+    ///     require_expression(block_id);
+    /// }
+    /// ```
+    BlockId
+);
+
+persistent_entity_id!(
+    /// Persistent typed identity of one Expression.
+    ExpressionId
+);

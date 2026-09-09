@@ -269,7 +269,7 @@ fn cross_block_comparison_operands_fail_in_both_positions() {
     for foreign_on_left in [true, false] {
         let (mut program, block_id, local, foreign) = program_with_two_blocks();
         let source_revision = program.revision_id();
-        let source_history = program.committed_expression_id_count();
+        let source_allocation_state = program.allocation_counter_state();
         let mut transaction = program.begin_transaction();
         let provisional = transaction.add_bool_literal(block_id, true).unwrap();
         let (left, right) = if foreign_on_left {
@@ -288,7 +288,7 @@ fn cross_block_comparison_operands_fail_in_both_positions() {
         assert!(transaction.commit().is_err());
         drop(transaction);
         assert_eq!(program.revision_id(), source_revision);
-        assert_eq!(program.committed_expression_id_count(), source_history);
+        assert_ne!(program.allocation_counter_state(), source_allocation_state);
         assert!(program.expression(provisional).is_none());
     }
 }
@@ -404,14 +404,14 @@ fn comparison_identity_snapshot_fork_and_removal_semantics_are_preserved() {
     transaction.set_return(block_id, comparison).unwrap();
     let snapshot = transaction.commit().unwrap();
 
-    // MNIR-CMP-067: an empty no-op commit preserves all comparison data and
-    // allocation history while Program Model semantics allocate a revision.
-    let expression_history = program.committed_expression_id_count();
+    // MNIR-CMP-067 and MNIR-PSI-060: an empty no-op commit preserves all
+    // comparison data and allocator state while allocating a revision.
+    let allocation_state = program.allocation_counter_state();
     let revision_before_no_op = program.revision_id();
     let mut transaction = program.begin_transaction();
     transaction.commit().unwrap();
     assert_ne!(program.revision_id(), revision_before_no_op);
-    assert_eq!(program.committed_expression_id_count(), expression_history);
+    assert_eq!(program.allocation_counter_state(), allocation_state);
     assert_eq!(
         program.expression(comparison).unwrap().kind(),
         &ExpressionKind::LessThan { left, right }
@@ -444,7 +444,6 @@ fn comparison_identity_snapshot_fork_and_removal_semantics_are_preserved() {
     transaction.remove_function_body(function_id).unwrap();
     transaction.commit().unwrap();
     assert!(program.expression(comparison).is_none());
-    assert!(program.is_expression_id_committed(comparison));
 
     let mut transaction = program.begin_transaction();
     let function_replacement_block = transaction.create_function_body(function_id).unwrap();
@@ -472,7 +471,6 @@ fn comparison_identity_snapshot_fork_and_removal_semantics_are_preserved() {
             .expression(function_replacement_comparison)
             .is_none()
     );
-    assert!(program.is_expression_id_committed(function_replacement_comparison));
 
     let mut transaction = program.begin_transaction();
     let module_replacement = transaction
@@ -496,7 +494,6 @@ fn comparison_identity_snapshot_fork_and_removal_semantics_are_preserved() {
     transaction.remove_module(module_id).unwrap();
     transaction.commit().unwrap();
     assert!(program.expression(replacement_comparison).is_none());
-    assert!(program.is_expression_id_committed(replacement_comparison));
 }
 
 // AR-CMP-033/-034 are conformance-inspection requirements: this crate adds no

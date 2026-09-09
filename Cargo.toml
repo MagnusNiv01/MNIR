@@ -15,5 +15,6 @@ publish = false
 
 [workspace.dependencies]
 easyh-render = { path = "crates/easyh-render" }
+getrandom = "0.3"
 mnir-core = { path = "crates/mnir-core" }
 mnir-verify = { path = "crates/mnir-verify" }

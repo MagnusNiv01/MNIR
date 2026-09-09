@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use crate::IntrinsicType;
 use crate::ids::{
-    BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, RevisionId,
+    AllocationCounterState, AllocationNamespaceId, BlockId, ExpressionId, FunctionId,
+    IdentifierCategory, ModuleId, ParameterId, RevisionId,
 };
 
 use super::body::{Block, Expression, ExpressionKind, FunctionBody, Terminator};
@@ -28,11 +29,6 @@ impl MnirProgram {
             provisional_parameter_ids: HashSet::new(),
             provisional_block_ids: HashSet::new(),
             provisional_expression_ids: HashSet::new(),
-            next_module_raw: self.next_module_raw,
-            next_function_raw: self.next_function_raw,
-            next_parameter_raw: self.next_parameter_raw,
-            next_block_raw: self.next_block_raw,
-            next_expression_raw: self.next_expression_raw,
             lineage: self,
             state: TransactionState::Active,
         }
@@ -49,11 +45,6 @@ pub struct MutationTransaction<'program> {
     provisional_parameter_ids: HashSet<ParameterId>,
     provisional_block_ids: HashSet<BlockId>,
     provisional_expression_ids: HashSet<ExpressionId>,
-    next_module_raw: Option<u64>,
-    next_function_raw: Option<u64>,
-    next_parameter_raw: Option<u64>,
-    next_block_raw: Option<u64>,
-    next_expression_raw: Option<u64>,
     state: TransactionState,
 }
 
@@ -83,6 +74,18 @@ impl MutationTransaction<'_> {
     #[must_use]
     pub const fn source_revision_id(&self) -> RevisionId {
         self.source_revision_id
+    }
+
+    /// Observes the mutable lineage's single active allocation namespace.
+    #[must_use]
+    pub const fn allocation_namespace_id(&self) -> AllocationNamespaceId {
+        self.lineage.allocation_authority.namespace_id()
+    }
+
+    /// Observes allocator state after all reservations performed so far.
+    #[must_use]
+    pub const fn allocation_counter_state(&self) -> AllocationCounterState {
+        self.lineage.allocation_authority.counter_state()
     }
 
     #[must_use]
@@ -151,6 +154,17 @@ impl MutationTransaction<'_> {
     #[must_use]
     pub fn is_expression_id_provisional(&self, id: ExpressionId) -> bool {
         self.state == TransactionState::Active && self.provisional_expression_ids.contains(&id)
+    }
+
+    /// Reports whether the transaction's working semantic contents equal its
+    /// source revision.
+    ///
+    /// Allocation-authority state is deliberately excluded, so successfully
+    /// issued and later removed identities do not make an otherwise empty
+    /// change semantic (`MNIR-PSI-046` through `MNIR-PSI-050`).
+    #[must_use]
+    pub fn is_semantic_no_op(&self) -> bool {
+        self.working_modules == self.lineage.head.modules
     }
 
     pub fn add_module(&mut self) -> Result<ModuleId, MutationError> {
@@ -809,25 +823,7 @@ impl MutationTransaction<'_> {
             return Err(self.fail(error));
         }
 
-        let mut committed_module_ids = self.lineage.head.committed_module_ids.clone();
-        committed_module_ids.extend(self.provisional_module_ids.iter().copied());
-        let mut committed_function_ids = self.lineage.head.committed_function_ids.clone();
-        committed_function_ids.extend(self.provisional_function_ids.iter().copied());
-        let mut committed_parameter_ids = self.lineage.head.committed_parameter_ids.clone();
-        committed_parameter_ids.extend(self.provisional_parameter_ids.iter().copied());
-        let mut committed_block_ids = self.lineage.head.committed_block_ids.clone();
-        committed_block_ids.extend(self.provisional_block_ids.iter().copied());
-        let mut committed_expression_ids = self.lineage.head.committed_expression_ids.clone();
-        committed_expression_ids.extend(self.provisional_expression_ids.iter().copied());
-
-        if let Err(error) = validate_modules(
-            &self.working_modules,
-            &committed_module_ids,
-            &committed_function_ids,
-            &committed_parameter_ids,
-            &committed_block_ids,
-            &committed_expression_ids,
-        ) {
+        if let Err(error) = validate_modules(&self.working_modules) {
             return Err(self.fail(MutationError::StructuralViolation(error)));
         }
 
@@ -843,17 +839,7 @@ impl MutationTransaction<'_> {
         self.lineage.head = Arc::new(RevisionState {
             revision_id,
             modules,
-            committed_module_ids,
-            committed_function_ids,
-            committed_parameter_ids,
-            committed_block_ids,
-            committed_expression_ids,
         });
-        self.lineage.next_module_raw = self.next_module_raw;
-        self.lineage.next_function_raw = self.next_function_raw;
-        self.lineage.next_parameter_raw = self.next_parameter_raw;
-        self.lineage.next_block_raw = self.next_block_raw;
-        self.lineage.next_expression_raw = self.next_expression_raw;
         self.state = TransactionState::Committed;
 
         Ok(self.lineage.snapshot())
@@ -971,85 +957,43 @@ impl MutationTransaction<'_> {
     }
 
     fn allocate_module_id(&mut self) -> Result<ModuleId, MutationError> {
-        loop {
-            let raw = allocate_from_cursor(&mut self.next_module_raw, IdentifierCategory::Module)?;
-            let candidate = ModuleId(raw);
-
-            if !self.lineage.head.committed_module_ids.contains(&candidate)
-                && !self.provisional_module_ids.contains(&candidate)
-            {
-                return Ok(candidate);
-            }
-        }
+        let (namespace_id, counter) = self
+            .lineage
+            .allocation_authority
+            .reserve(IdentifierCategory::Module)?;
+        Ok(ModuleId::new(namespace_id, counter))
     }
 
     fn allocate_function_id(&mut self) -> Result<FunctionId, MutationError> {
-        loop {
-            let raw =
-                allocate_from_cursor(&mut self.next_function_raw, IdentifierCategory::Function)?;
-            let candidate = FunctionId(raw);
-
-            if !self
-                .lineage
-                .head
-                .committed_function_ids
-                .contains(&candidate)
-                && !self.provisional_function_ids.contains(&candidate)
-            {
-                return Ok(candidate);
-            }
-        }
+        let (namespace_id, counter) = self
+            .lineage
+            .allocation_authority
+            .reserve(IdentifierCategory::Function)?;
+        Ok(FunctionId::new(namespace_id, counter))
     }
 
     fn allocate_parameter_id(&mut self) -> Result<ParameterId, MutationError> {
-        loop {
-            let raw =
-                allocate_from_cursor(&mut self.next_parameter_raw, IdentifierCategory::Parameter)?;
-            let candidate = ParameterId(raw);
-
-            if !self
-                .lineage
-                .head
-                .committed_parameter_ids
-                .contains(&candidate)
-                && !self.provisional_parameter_ids.contains(&candidate)
-            {
-                return Ok(candidate);
-            }
-        }
+        let (namespace_id, counter) = self
+            .lineage
+            .allocation_authority
+            .reserve(IdentifierCategory::Parameter)?;
+        Ok(ParameterId::new(namespace_id, counter))
     }
 
     fn allocate_block_id(&mut self) -> Result<BlockId, MutationError> {
-        loop {
-            let raw = allocate_from_cursor(&mut self.next_block_raw, IdentifierCategory::Block)?;
-            let candidate = BlockId(raw);
-
-            if !self.lineage.head.committed_block_ids.contains(&candidate)
-                && !self.provisional_block_ids.contains(&candidate)
-            {
-                return Ok(candidate);
-            }
-        }
+        let (namespace_id, counter) = self
+            .lineage
+            .allocation_authority
+            .reserve(IdentifierCategory::Block)?;
+        Ok(BlockId::new(namespace_id, counter))
     }
 
     fn allocate_expression_id(&mut self) -> Result<ExpressionId, MutationError> {
-        loop {
-            let raw = allocate_from_cursor(
-                &mut self.next_expression_raw,
-                IdentifierCategory::Expression,
-            )?;
-            let candidate = ExpressionId(raw);
-
-            if !self
-                .lineage
-                .head
-                .committed_expression_ids
-                .contains(&candidate)
-                && !self.provisional_expression_ids.contains(&candidate)
-            {
-                return Ok(candidate);
-            }
-        }
+        let (namespace_id, counter) = self
+            .lineage
+            .allocation_authority
+            .reserve(IdentifierCategory::Expression)?;
+        Ok(ExpressionId::new(namespace_id, counter))
     }
 }
 
@@ -1060,4 +1004,214 @@ fn allocate_from_cursor(
     let raw = cursor.ok_or(MutationError::IdentifierExhausted(category))?;
     *cursor = raw.checked_add(1);
     Ok(raw)
+}
+
+#[cfg(test)]
+mod persistent_identity_tests {
+    use crate::{
+        AllocationCounterState, IdentifierCategory, IntrinsicType, MnirProgram, ModuleId,
+        MutationError, StructuralError, TransactionState,
+    };
+
+    // AR-PSI-009 and AR-PSI-039; MNIR-PSI-032/-034/-042.
+    #[test]
+    fn last_counter_direct_discard_preserves_exhaustion_and_non_reuse() {
+        let mut program = MnirProgram::new().unwrap();
+        let namespace = program.allocation_namespace_id();
+        let revision = program.revision_id();
+        program
+            .allocation_authority
+            .set_counter_state_for_test(AllocationCounterState::Available(u64::MAX));
+
+        let mut transaction = program.begin_transaction();
+        let last = transaction.add_module().unwrap();
+        assert_eq!(last.namespace_id(), namespace);
+        assert_eq!(last.counter(), u64::MAX);
+        assert!(transaction.module(last).is_some());
+        assert_eq!(
+            transaction.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+        transaction.discard().unwrap();
+        drop(transaction);
+
+        let snapshot = program.snapshot();
+        assert_eq!(snapshot.revision_id(), revision);
+        assert_eq!(snapshot.allocation_namespace_id(), namespace);
+        assert_eq!(
+            snapshot.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+        assert!(snapshot.module(last).is_none());
+
+        let mut next = program.begin_transaction();
+        assert_eq!(next.allocation_namespace_id(), namespace);
+        assert_eq!(
+            next.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+        assert_eq!(
+            next.add_module(),
+            Err(MutationError::IdentifierExhausted(
+                IdentifierCategory::Module
+            ))
+        );
+        assert_eq!(next.state(), TransactionState::Failed);
+        assert_eq!(
+            next.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+        assert_eq!(next.allocation_namespace_id(), namespace);
+        assert_eq!(next.module_count(), 0);
+    }
+
+    // AR-PSI-037 and AR-PSI-039; allocation beginning in Exhausted fails
+    // before issuance, poisons the transaction, and never rotates authority.
+    #[test]
+    fn allocation_from_exhausted_fails_and_poisons_without_rotation() {
+        let mut program = MnirProgram::new().unwrap();
+        let namespace = program.allocation_namespace_id();
+        program
+            .allocation_authority
+            .set_counter_state_for_test(AllocationCounterState::Exhausted);
+
+        let mut transaction = program.begin_transaction();
+        assert_eq!(
+            transaction.add_module(),
+            Err(MutationError::IdentifierExhausted(
+                IdentifierCategory::Module
+            ))
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        assert_eq!(transaction.allocation_namespace_id(), namespace);
+        assert_eq!(
+            transaction.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+        assert_eq!(transaction.module_count(), 0);
+    }
+
+    // AR-PSI-020; MNIR-PSI-033 requires public preconditions before reserve.
+    #[test]
+    fn precondition_failure_does_not_reserve_counter() {
+        let mut program = MnirProgram::new().unwrap();
+        let namespace = program.allocation_namespace_id();
+        program
+            .allocation_authority
+            .set_counter_state_for_test(AllocationCounterState::Available(100));
+        let unknown_module = ModuleId::new(namespace, 99);
+        let program_id = program.program_id();
+        let revision_id = program.revision_id();
+        let semantic_module_count = program.module_count();
+        let s1 = program.snapshot();
+        assert_eq!(s1.program_id(), program_id);
+        assert_eq!(s1.revision_id(), revision_id);
+        assert_eq!(s1.allocation_namespace_id(), namespace);
+        assert_eq!(
+            s1.allocation_counter_state(),
+            AllocationCounterState::Available(100)
+        );
+        assert_eq!(s1.module_count(), semantic_module_count);
+
+        let mut failed = program.begin_transaction();
+        assert_eq!(
+            failed.add_function(unknown_module, IntrinsicType::Unit),
+            Err(MutationError::UnknownModule(unknown_module))
+        );
+        assert_eq!(failed.state(), TransactionState::Failed);
+        assert_eq!(
+            failed.allocation_counter_state(),
+            AllocationCounterState::Available(100)
+        );
+        failed.discard().unwrap();
+        drop(failed);
+
+        let mut next = program.begin_transaction();
+        let issued = next.add_module().unwrap();
+        assert_eq!(issued.namespace_id(), namespace);
+        assert_eq!(issued.counter(), 100);
+        next.discard().unwrap();
+        drop(next);
+
+        let s2 = program.snapshot();
+        assert_eq!(s2.program_id(), program_id);
+        assert_eq!(s2.revision_id(), revision_id);
+        assert_eq!(s2.allocation_namespace_id(), namespace);
+        assert_eq!(
+            s2.allocation_counter_state(),
+            AllocationCounterState::Available(101)
+        );
+        assert_eq!(s2.module_count(), semantic_module_count);
+
+        // S1 remains an immutable observation after S2 has been created.
+        assert_eq!(s1.program_id(), program_id);
+        assert_eq!(s1.revision_id(), revision_id);
+        assert_eq!(s1.allocation_namespace_id(), namespace);
+        assert_eq!(
+            s1.allocation_counter_state(),
+            AllocationCounterState::Available(100)
+        );
+        assert_eq!(s1.module_count(), semantic_module_count);
+    }
+
+    // AR-PSI-021/-022/-025/-026; MNIR-PSI-040 through MNIR-PSI-048.
+    #[test]
+    fn poison_and_discard_preserve_allocator_advancement_without_revision() {
+        let mut program = MnirProgram::new().unwrap();
+        let program_id = program.program_id();
+        let revision_id = program.revision_id();
+        let namespace = program.allocation_namespace_id();
+        program
+            .allocation_authority
+            .set_counter_state_for_test(AllocationCounterState::Available(200));
+        let unknown_module = ModuleId::new(namespace, 199);
+
+        let mut failed = program.begin_transaction();
+        let consumed = failed.add_module().unwrap();
+        assert_eq!(consumed.counter(), 200);
+        assert_eq!(
+            failed.remove_module(unknown_module),
+            Err(MutationError::UnknownModule(unknown_module))
+        );
+        failed.discard().unwrap();
+        drop(failed);
+
+        assert_eq!(program.program_id(), program_id);
+        assert_eq!(program.revision_id(), revision_id);
+        assert_eq!(program.module_count(), 0);
+        assert_eq!(
+            program.allocation_counter_state(),
+            AllocationCounterState::Available(201)
+        );
+        let mut next = program.begin_transaction();
+        let later = next.add_module().unwrap();
+        assert_eq!(later.counter(), 201);
+        assert_ne!(later, consumed);
+    }
+
+    // AR-PSI-023; MNIR-PSI-043.
+    #[test]
+    fn structurally_failed_commit_does_not_reuse_issued_ids() {
+        let mut program = MnirProgram::new().unwrap();
+        let revision = program.revision_id();
+        let mut failed = program.begin_transaction();
+        let module = failed.add_module().unwrap();
+        let function = failed.add_function(module, IntrinsicType::Unit).unwrap();
+        let block = failed.create_function_body(function).unwrap();
+        let consumed_counter = block.counter();
+        assert!(matches!(
+            failed.commit(),
+            Err(MutationError::StructuralViolation(
+                StructuralError::UnterminatedBlock(actual)
+            )) if actual == block
+        ));
+        failed.discard().unwrap();
+        drop(failed);
+
+        assert_eq!(program.revision_id(), revision);
+        assert_eq!(program.module_count(), 0);
+        let mut next = program.begin_transaction();
+        let later = next.add_module().unwrap();
+        assert!(later.counter() > consumed_counter);
+    }
 }

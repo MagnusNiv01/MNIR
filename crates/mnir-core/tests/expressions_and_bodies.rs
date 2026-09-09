@@ -384,8 +384,6 @@ fn function_and_body_removal_cascade_and_retire_committed_identities() {
     let (new_block, new_expression) = add_unit_body(&mut program, function_id);
     assert_ne!(old_block, new_block);
     assert_ne!(old_expression, new_expression);
-    assert!(program.is_block_id_committed(old_block));
-    assert!(program.is_expression_id_committed(old_expression));
 
     let mut transaction = program.begin_transaction();
     transaction.remove_function(function_id).unwrap();
@@ -393,8 +391,6 @@ fn function_and_body_removal_cascade_and_retire_committed_identities() {
     assert!(program.function(function_id).is_none());
     assert!(program.block(new_block).is_none());
     assert!(program.expression(new_expression).is_none());
-    assert!(program.is_block_id_committed(new_block));
-    assert!(program.is_expression_id_committed(new_expression));
 
     let mut transaction = program.begin_transaction();
     let replacement_function = transaction
@@ -414,7 +410,7 @@ fn function_and_body_removal_cascade_and_retire_committed_identities() {
 
 // AR-EXPR-019 and AR-EXPR-044 (Module cascade arm).
 #[test]
-fn module_removal_cascades_bodies_and_preserves_identity_history() {
+fn module_removal_cascades_bodies_without_enabling_identity_reuse() {
     let mut program = MnirProgram::new().unwrap();
     let (module_id, function_id, _) =
         add_module_and_function(&mut program, IntrinsicType::Unit, vec![]);
@@ -426,44 +422,34 @@ fn module_removal_cascades_bodies_and_preserves_identity_history() {
     assert!(program.function(function_id).is_none());
     assert!(program.block(block_id).is_none());
     assert!(program.expression(expression_id).is_none());
-    assert!(program.is_block_id_committed(block_id));
-    assert!(program.is_expression_id_committed(expression_id));
 }
 
-// AR-EXPR-022, MNIR-EXPR-061, and MNIR-EXPR-080.
+// AR-EXPR-022, MNIR-EXPR-061, MNIR-EXPR-080, and MNIR-PSI-032.
 #[test]
-fn allocated_then_removed_body_still_advances_committed_history_and_revision() {
+fn allocated_then_removed_body_still_consumes_identities_and_advances_revision() {
     let mut program = MnirProgram::new().unwrap();
     let (_, function_id, _) = add_module_and_function(&mut program, IntrinsicType::Unit, vec![]);
     let source_revision = program.revision_id();
-    let old_block_history = program.committed_block_id_count();
-    let old_expression_history = program.committed_expression_id_count();
+    let old_allocation_state = program.allocation_counter_state();
     let mut transaction = program.begin_transaction();
     let block_id = transaction.create_function_body(function_id).unwrap();
     let expression_id = transaction.add_unit_literal(block_id).unwrap();
     transaction.remove_function_body(function_id).unwrap();
     transaction.commit().unwrap();
     assert_ne!(program.revision_id(), source_revision);
-    assert_eq!(program.committed_block_id_count(), old_block_history + 1);
-    assert_eq!(
-        program.committed_expression_id_count(),
-        old_expression_history + 1
-    );
-    assert!(program.is_block_id_committed(block_id));
-    assert!(program.is_expression_id_committed(expression_id));
+    assert_ne!(program.allocation_counter_state(), old_allocation_state);
 
     let (next_block, next_expression) = add_unit_body(&mut program, function_id);
     assert_ne!(block_id, next_block);
     assert_ne!(expression_id, next_expression);
 }
 
-// AR-EXPR-023 and MNIR-EXPR-062.
+// AR-EXPR-023 and MNIR-EXPR-062 as superseded by MNIR-PSI-033/-034.
 #[test]
-fn failed_and_discarded_provisional_body_identities_are_not_committed() {
+fn failed_and_discarded_body_identities_are_absent_but_consumed() {
     let mut program = MnirProgram::new().unwrap();
     let (_, function_id, _) = add_module_and_function(&mut program, IntrinsicType::Unit, vec![]);
-    let initial_blocks = program.committed_block_id_count();
-    let initial_expressions = program.committed_expression_id_count();
+    let initial_allocation_state = program.allocation_counter_state();
 
     let mut transaction = program.begin_transaction();
     let failed_block = transaction.create_function_body(function_id).unwrap();
@@ -471,18 +457,19 @@ fn failed_and_discarded_provisional_body_identities_are_not_committed() {
     assert!(transaction.commit().is_err());
     transaction.discard().unwrap();
     drop(transaction);
-    assert!(!program.is_block_id_committed(failed_block));
-    assert!(!program.is_expression_id_committed(failed_expression));
+    assert!(program.block(failed_block).is_none());
+    assert!(program.expression(failed_expression).is_none());
 
     let mut transaction = program.begin_transaction();
     let discarded_block = transaction.create_function_body(function_id).unwrap();
     let discarded_expression = transaction.add_unit_literal(discarded_block).unwrap();
     transaction.discard().unwrap();
     drop(transaction);
-    assert!(!program.is_block_id_committed(discarded_block));
-    assert!(!program.is_expression_id_committed(discarded_expression));
-    assert_eq!(program.committed_block_id_count(), initial_blocks);
-    assert_eq!(program.committed_expression_id_count(), initial_expressions);
+    assert!(program.block(discarded_block).is_none());
+    assert!(program.expression(discarded_expression).is_none());
+    assert_ne!(program.allocation_counter_state(), initial_allocation_state);
+    assert!(discarded_block.counter() > failed_expression.counter());
+    assert!(discarded_expression.counter() > discarded_block.counter());
 }
 
 // AR-EXPR-024 and AR-EXPR-025; MNIR-EXPR-066/-067/-099.
@@ -527,8 +514,8 @@ fn snapshots_and_forks_preserve_body_identities_and_references() {
     transaction.commit().unwrap();
     assert_ne!(new_block, block_id);
     assert_ne!(new_expression, expression_id);
-    assert!(fork.is_block_id_committed(block_id));
-    assert!(fork.is_expression_id_committed(expression_id));
+    assert!(fork.block(block_id).is_none());
+    assert!(fork.expression(expression_id).is_none());
     assert!(fork.module(module_id).is_some());
 }
 

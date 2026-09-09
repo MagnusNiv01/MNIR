@@ -61,7 +61,7 @@ fn cfg_construction_replacement_and_read_only_inspection() {
     assert_eq!(body.block_count(), 3);
     assert_eq!(body.blocks().count(), 3);
     assert_eq!(body.block_by_id(true_block).unwrap().id(), true_block);
-    assert!(program.is_block_id_committed(true_block));
+    assert!(program.block(true_block).is_some());
 }
 
 // AR-CFG-008: duplicate semantic edges are allowed and do not alone form a cycle.
@@ -283,7 +283,7 @@ fn commit_rejects_direct_and_indirect_cfg_cycles() {
 
 // AR-CFG-018 through AR-CFG-021, AR-CFG-039, and MNIR-CFG-063 through -068.
 #[test]
-fn block_removal_is_repairable_and_preserves_allocation_history() {
+fn block_removal_is_repairable_and_does_not_reuse_identity() {
     let mut program = MnirProgram::new().unwrap();
     let mut transaction = program.begin_transaction();
     let module = transaction.add_module().unwrap();
@@ -304,8 +304,6 @@ fn block_removal_is_repairable_and_preserves_allocation_history() {
     assert!(transaction.expression(removed_expression).is_none());
     transaction.set_return(entry, entry_unit).unwrap();
     transaction.commit().unwrap();
-    assert!(program.is_block_id_committed(removed));
-    assert!(program.is_expression_id_committed(removed_expression));
 
     let mut transaction = program.begin_transaction();
     let next = transaction.add_block(function).unwrap();
@@ -389,7 +387,7 @@ fn snapshot_and_fork_preserve_cfg_references() {
 }
 
 // MNIR-CFG-063 through MNIR-CFG-066: every ownership-level cascade removes
-// all CFG state while retaining committed allocation history.
+// all CFG state while leaving all issued identities consumed.
 #[test]
 fn body_function_and_module_removal_cascade_all_cfg_state() {
     fn add_cfg(
@@ -433,7 +431,6 @@ fn body_function_and_module_removal_cascade_all_cfg_state() {
         .chain(module_blocks)
     {
         assert!(program.block(block).is_none());
-        assert!(program.is_block_id_committed(block));
     }
     for expression in body_expressions
         .into_iter()
@@ -441,7 +438,6 @@ fn body_function_and_module_removal_cascade_all_cfg_state() {
         .chain(module_expressions)
     {
         assert!(program.expression(expression).is_none());
-        assert!(program.is_expression_id_committed(expression));
     }
 }
 
