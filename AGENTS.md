@@ -23,6 +23,28 @@ This repository uses specification-driven development. These instructions apply 
 - Human-readable source code is a presentation or frontend form; it is not intended to become the canonical program representation.
 - Avoid dependencies unless there is a clear technical reason.
 
+## Direct external dependency governance
+
+An agent MUST NOT add, remove, upgrade, downgrade, or change features of a
+direct external dependency unless explicitly mandated by the task or an
+authoritative specification.
+
+If a direct external dependency change appears technically necessary but is
+not explicitly authorized, the agent MUST report:
+
+```text
+DEPENDENCY DECISION REQUIRED
+Dependency:
+Purpose:
+Scope:
+Alternatives:
+Security/portability implications:
+```
+
+The agent MUST then stop before making that dependency change. Transitive
+`Cargo.lock` changes caused by an already-authorized direct dependency change
+do not require separate approval, but MUST be reported.
+
 ## Documentation freshness before commits
 
 Before every Git commit, analyze whether the following documents accurately

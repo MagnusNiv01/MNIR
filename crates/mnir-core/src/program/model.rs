@@ -349,12 +349,22 @@ impl ProgramSnapshot {
     ///
     /// Inherited persistent entity identities and references are preserved
     /// exactly. The fork receives a fresh Program ID and allocation namespace
-    /// (`MNIR-PSI-061` through `MNIR-PSI-070`).
+    /// (`MNIR-PSI-061` through `MNIR-PSI-070`). Identity-generation failure
+    /// returns an implementation-neutral error without changing the source
+    /// lineage (`MNIR-PSI-099` through `MNIR-PSI-103`).
     pub fn fork(&self) -> Result<MnirProgram, MutationError> {
-        let program_id = allocate_program_id(&HashSet::from([self.program_id.0]))?;
+        let mut generate = generate_random_identity;
+        self.fork_with_identity_generator(&mut generate)
+    }
+
+    fn fork_with_identity_generator<E>(
+        &self,
+        generate: &mut impl FnMut(IdentifierCategory) -> Result<[u8; 16], E>,
+    ) -> Result<MnirProgram, MutationError> {
+        let program_id = allocate_program_id_with(&HashSet::from([self.program_id.0]), generate)?;
         let modules = self.state.copied_modules();
         let known_namespaces = collect_present_namespaces(&modules, self.allocation_namespace_id());
-        let namespace_id = allocate_namespace_id(&known_namespaces)?;
+        let namespace_id = allocate_namespace_id_with(&known_namespaces, generate)?;
 
         Ok(MnirProgram {
             program_id,
@@ -379,10 +389,19 @@ pub struct MnirProgram {
 
 impl MnirProgram {
     /// Constructs an empty, structurally valid Program and its initial
-    /// committed revision (`AR-CORE-001`).
+    /// committed revision (`AR-CORE-001`). Identity-generation failure returns
+    /// an implementation-neutral error and exposes no partial Program lineage
+    /// (`MNIR-PSI-099`, `MNIR-PSI-100`, and `MNIR-PSI-102`).
     pub fn new() -> Result<Self, MutationError> {
-        let program_id = allocate_program_id(&HashSet::new())?;
-        let namespace_id = allocate_namespace_id(&HashSet::new())?;
+        let mut generate = generate_random_identity;
+        Self::new_with_identity_generator(&mut generate)
+    }
+
+    fn new_with_identity_generator<E>(
+        generate: &mut impl FnMut(IdentifierCategory) -> Result<[u8; 16], E>,
+    ) -> Result<Self, MutationError> {
+        let program_id = allocate_program_id_with(&HashSet::new(), generate)?;
+        let namespace_id = allocate_namespace_id_with(&HashSet::new(), generate)?;
         Ok(Self {
             program_id,
             head: Arc::new(RevisionState {
@@ -711,36 +730,35 @@ fn copy_expression_type_result(
     }
 }
 
-fn allocate_program_id(known: &HashSet<[u8; 16]>) -> Result<ProgramId, MutationError> {
-    allocate_random_identity(IdentifierCategory::Program, known).map(ProgramId)
+fn allocate_program_id_with<E>(
+    known: &HashSet<[u8; 16]>,
+    generate: &mut impl FnMut(IdentifierCategory) -> Result<[u8; 16], E>,
+) -> Result<ProgramId, MutationError> {
+    allocate_identity_with(IdentifierCategory::Program, known, generate).map(ProgramId)
 }
 
-fn allocate_namespace_id(
+fn allocate_namespace_id_with<E>(
     known: &HashSet<[u8; 16]>,
+    generate: &mut impl FnMut(IdentifierCategory) -> Result<[u8; 16], E>,
 ) -> Result<AllocationNamespaceId, MutationError> {
-    allocate_random_identity(IdentifierCategory::AllocationNamespace, known)
+    allocate_identity_with(IdentifierCategory::AllocationNamespace, known, generate)
         .map(AllocationNamespaceId)
 }
 
-fn allocate_random_identity(
-    category: IdentifierCategory,
-    known: &HashSet<[u8; 16]>,
-) -> Result<[u8; 16], MutationError> {
-    allocate_identity_with(category, known, || {
-        let mut bytes = [0_u8; 16];
-        getrandom::fill(&mut bytes)
-            .map_err(|_| MutationError::IdentityGenerationFailed(category))?;
-        Ok(bytes)
-    })
+fn generate_random_identity(_category: IdentifierCategory) -> Result<[u8; 16], getrandom::Error> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes)?;
+    Ok(bytes)
 }
 
-fn allocate_identity_with(
+fn allocate_identity_with<E>(
     category: IdentifierCategory,
     known: &HashSet<[u8; 16]>,
-    mut generate: impl FnMut() -> Result<[u8; 16], MutationError>,
+    generate: &mut impl FnMut(IdentifierCategory) -> Result<[u8; 16], E>,
 ) -> Result<[u8; 16], MutationError> {
     for _ in 0..IDENTITY_GENERATION_ATTEMPTS {
-        let candidate = generate()?;
+        let candidate =
+            generate(category).map_err(|_| MutationError::IdentityGenerationFailed(category))?;
         if !known.contains(&candidate) {
             return Ok(candidate);
         }
@@ -775,11 +793,15 @@ fn collect_present_namespaces(
 
 #[cfg(test)]
 mod persistent_identity_tests {
+    use std::cell::Cell;
     use std::collections::{HashSet, VecDeque};
 
-    use crate::{IdentifierCategory, MutationError};
+    use crate::{IdentifierCategory, IntrinsicType, MutationError};
 
-    use super::{IDENTITY_GENERATION_ATTEMPTS, allocate_identity_with};
+    use super::{IDENTITY_GENERATION_ATTEMPTS, MnirProgram, allocate_identity_with};
+
+    #[derive(Debug)]
+    struct ProviderFailure;
 
     // AR-PSI-006; MNIR-PSI-013/-021 require detected collisions to be
     // handled rather than accepted as shared identity or authority.
@@ -791,8 +813,8 @@ mod persistent_identity_tests {
         let mut candidates = VecDeque::from([collision, distinct]);
 
         let allocated =
-            allocate_identity_with(IdentifierCategory::AllocationNamespace, &known, || {
-                Ok(candidates.pop_front().unwrap())
+            allocate_identity_with(IdentifierCategory::AllocationNamespace, &known, &mut |_| {
+                Ok::<_, ProviderFailure>(candidates.pop_front().unwrap())
             })
             .unwrap();
 
@@ -806,9 +828,9 @@ mod persistent_identity_tests {
         let known = HashSet::from([collision]);
         let mut attempts = 0;
 
-        let error = allocate_identity_with(IdentifierCategory::Program, &known, || {
+        let error = allocate_identity_with(IdentifierCategory::Program, &known, &mut |_| {
             attempts += 1;
-            Ok(collision)
+            Ok::<_, ProviderFailure>(collision)
         })
         .unwrap_err();
 
@@ -817,5 +839,188 @@ mod persistent_identity_tests {
             error,
             MutationError::IdentityCollision(IdentifierCategory::Program)
         );
+    }
+
+    // AR-PSI-040; MNIR-PSI-099/-100. Provider errors are mapped to the
+    // implementation-neutral public error and no Program value is produced.
+    #[test]
+    fn new_program_generation_failure_is_atomic_and_provider_neutral() {
+        let mut requested = Vec::new();
+        let result = MnirProgram::new_with_identity_generator(&mut |category| {
+            requested.push(category);
+            Err::<[u8; 16], _>(ProviderFailure)
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            MutationError::IdentityGenerationFailed(IdentifierCategory::Program)
+        );
+        assert_eq!(requested, [IdentifierCategory::Program]);
+    }
+
+    // AR-PSI-041; MNIR-PSI-100/-102. A generated Program candidate does not
+    // expose a partial lineage when namespace generation subsequently fails.
+    #[test]
+    fn partial_new_program_generation_exposes_no_lineage_or_authority() {
+        let mut requested = Vec::new();
+        let result = MnirProgram::new_with_identity_generator(&mut |category| {
+            requested.push(category);
+            match category {
+                IdentifierCategory::Program => Ok([1_u8; 16]),
+                IdentifierCategory::AllocationNamespace => Err(ProviderFailure),
+                _ => unreachable!("only lineage identities are generated here"),
+            }
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            MutationError::IdentityGenerationFailed(IdentifierCategory::AllocationNamespace)
+        );
+        assert_eq!(
+            requested,
+            [
+                IdentifierCategory::Program,
+                IdentifierCategory::AllocationNamespace
+            ]
+        );
+    }
+
+    // AR-PSI-042; MNIR-PSI-101. Failed fork identity generation produces no
+    // fork and leaves every observable part of the source lineage unchanged.
+    #[test]
+    fn fork_generation_failure_is_atomic_and_source_preserving() {
+        let mut source = MnirProgram::new().unwrap();
+        let mut transaction = source.begin_transaction();
+        let module = transaction.add_module().unwrap();
+        transaction.commit().unwrap();
+        drop(transaction);
+        let source_snapshot = source.snapshot();
+        let before = (
+            source.program_id(),
+            source.revision_id(),
+            source.allocation_namespace_id(),
+            source.allocation_counter_state(),
+            source.module_count(),
+        );
+        let mut requested = Vec::new();
+
+        let result = source_snapshot.fork_with_identity_generator(&mut |category| {
+            requested.push(category);
+            Err::<[u8; 16], _>(ProviderFailure)
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            MutationError::IdentityGenerationFailed(IdentifierCategory::Program)
+        );
+        assert_eq!(requested, [IdentifierCategory::Program]);
+        assert_eq!(
+            before,
+            (
+                source.program_id(),
+                source.revision_id(),
+                source.allocation_namespace_id(),
+                source.allocation_counter_state(),
+                source.module_count(),
+            )
+        );
+        assert_eq!(source.module(module), source_snapshot.module(module));
+    }
+
+    // AR-PSI-043; MNIR-PSI-101/-102. A fresh fork Program candidate remains
+    // internal if subsequent fork namespace generation fails.
+    #[test]
+    fn partial_fork_generation_exposes_no_fork_and_preserves_source() {
+        let mut source = MnirProgram::new().unwrap();
+        let mut transaction = source.begin_transaction();
+        let module = transaction.add_module().unwrap();
+        transaction.commit().unwrap();
+        drop(transaction);
+        let source_snapshot = source.snapshot();
+        let before = (
+            source.program_id(),
+            source.revision_id(),
+            source.allocation_namespace_id(),
+            source.allocation_counter_state(),
+            source.module_count(),
+        );
+        let mut requested = Vec::new();
+
+        let result = source_snapshot.fork_with_identity_generator(&mut |category| {
+            requested.push(category);
+            match category {
+                IdentifierCategory::Program => Ok([3_u8; 16]),
+                IdentifierCategory::AllocationNamespace => Err(ProviderFailure),
+                _ => unreachable!("only lineage identities are generated here"),
+            }
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            MutationError::IdentityGenerationFailed(IdentifierCategory::AllocationNamespace)
+        );
+        assert_eq!(
+            requested,
+            [
+                IdentifierCategory::Program,
+                IdentifierCategory::AllocationNamespace
+            ]
+        );
+        assert_eq!(
+            before,
+            (
+                source.program_id(),
+                source.revision_id(),
+                source.allocation_namespace_id(),
+                source.allocation_counter_state(),
+                source.module_count(),
+            )
+        );
+        assert_eq!(source.module(module), source_snapshot.module(module));
+    }
+
+    // AR-PSI-044; MNIR-PSI-104. The generator is used only for the Program
+    // and namespace; all entity categories use the lineage counter authority.
+    #[test]
+    fn existing_lineage_entity_allocation_does_not_generate_fresh_entropy() {
+        let generation_count = Cell::new(0_u8);
+        let mut program = MnirProgram::new_with_identity_generator(&mut |category| {
+            generation_count.set(generation_count.get() + 1);
+            match category {
+                IdentifierCategory::Program => Ok::<_, ProviderFailure>([4_u8; 16]),
+                IdentifierCategory::AllocationNamespace => Ok([5_u8; 16]),
+                _ => panic!("ordinary entity allocation requested fresh identity generation"),
+            }
+        })
+        .unwrap();
+        assert_eq!(generation_count.get(), 2);
+        let namespace = program.allocation_namespace_id();
+
+        let mut transaction = program.begin_transaction();
+        let module = transaction.add_module().unwrap();
+        let function = transaction
+            .add_function(module, IntrinsicType::Unit)
+            .unwrap();
+        let parameter = transaction
+            .add_parameter(function, IntrinsicType::Unit)
+            .unwrap();
+        let block = transaction.create_function_body(function).unwrap();
+        let expression = transaction.add_unit_literal(block).unwrap();
+        transaction.set_return(block, expression).unwrap();
+
+        let allocated = [
+            (module.namespace_id(), module.counter()),
+            (function.namespace_id(), function.counter()),
+            (parameter.namespace_id(), parameter.counter()),
+            (block.namespace_id(), block.counter()),
+            (expression.namespace_id(), expression.counter()),
+        ];
+        for (identity_namespace, _) in allocated {
+            assert_eq!(identity_namespace, namespace);
+        }
+        assert_eq!(allocated.map(|(_, counter)| counter), [1, 2, 3, 4, 5]);
+        assert_eq!(generation_count.get(), 2);
+        transaction.commit().unwrap();
+        assert_eq!(generation_count.get(), 2);
     }
 }

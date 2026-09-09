@@ -1245,7 +1245,7 @@ normative Persistent Semantic Identity 0.1 semantics:
 # 23. Acceptance requirements
 
 The acceptance range for this increment is `AR-PSI-001` through
-`AR-PSI-039`.
+`AR-PSI-044`.
 
 ## AR-PSI-001 — AllocationNamespaceId category
 
@@ -1667,6 +1667,69 @@ In a separate transaction, successfully reserve `MAX`, transition to
 
 ---
 
+## AR-PSI-040 — Program identity-generation failure
+
+Using controlled or injected test support, force identity generation to fail
+during creation of a new Program lineage.
+
+Verify:
+
+- Program creation returns an implementation-neutral typed MNIR/API error;
+- no Program lineage is created or becomes observable;
+- no partial Program or allocation-namespace state is exposed; and
+- no provider-specific error type crosses the public MNIR API.
+
+---
+
+## AR-PSI-041 — Partial Program identity generation
+
+Force fresh `ProgramId` generation to succeed and fresh
+`AllocationNamespaceId` generation to fail during creation of a new Program
+lineage.
+
+Verify no Program lineage or partial allocation authority is produced or made
+observable.
+
+---
+
+## AR-PSI-042 — Fork identity-generation failure
+
+Begin with a valid committed source Program and force identity generation to
+fail during normal fork creation.
+
+Verify:
+
+- no fork lineage is produced or made observable;
+- the source `ProgramId` and `RevisionId` remain unchanged;
+- the source semantic contents remain unchanged; and
+- the source allocation namespace, counter state, and allocation authority
+  remain unchanged.
+
+---
+
+## AR-PSI-043 — Partial fork identity generation
+
+During normal fork creation, force generation of the new fork `ProgramId` to
+succeed and generation of the new fork `AllocationNamespaceId` to fail.
+
+Verify no fork or partial fork allocation authority becomes observable and
+the complete source lineage remains unchanged.
+
+---
+
+## AR-PSI-044 — Existing-lineage allocation requires no fresh entropy
+
+Using controlled internal instrumentation or equivalent conformance evidence,
+create a Module, Function, Parameter, Block, and Expression in an existing
+lineage.
+
+Verify all five identities are allocated from the lineage's active
+namespace/counter authority and that no fresh Program or allocation-namespace
+identity generation is invoked by these ordinary `MutationTransaction`
+operations.
+
+---
+
 # 24. Explicit normative supersession and revision
 
 This section is normative. “Supersedes” applies only to the identified rule or
@@ -2010,6 +2073,88 @@ identity registry, import remapper, merge identity, or package identity
 abstraction solely in anticipation of future specifications.
 
 Typed covered ID categories MUST remain explicit.
+
+---
+
+## MNIR-PSI-099 — Identity-generation backend
+
+The concrete mechanism used to generate fresh `ProgramId` and
+`AllocationNamespaceId` values is implementation-defined. This includes the
+OS randomness source, host-provided entropy, runtime or platform backend,
+library or provider choice, retry strategy, and retry count.
+
+The generation backend, its configuration, and unused internal candidates are
+not MNIR semantic state. An implementation MUST nevertheless satisfy the
+coordination-free collision-resistance requirements of this specification.
+
+Provider-specific types or errors MUST NOT become part of MNIR semantic
+identity semantics or cross the public MNIR API. Generation failure exposed by
+that API MUST use an implementation-neutral typed MNIR error.
+
+---
+
+## MNIR-PSI-100 — New Program identity-generation failure
+
+Creation of a new Program lineage MAY fail if the implementation cannot
+generate every fresh persistent identity required by this specification.
+
+Such failure MUST expose an implementation-neutral typed MNIR/API error, MUST
+create no partially initialized Program lineage, MUST make no new Program
+observable, and MUST NOT establish partial allocation authority.
+
+---
+
+## MNIR-PSI-101 — Normal-fork identity-generation failure
+
+A normal fork MAY fail if generation of its required fresh `ProgramId` and
+`AllocationNamespaceId` cannot complete successfully.
+
+Failure MUST create no fork lineage and expose no partially created fork. It
+MUST leave the source lineage unchanged, including its `ProgramId`,
+`RevisionId`, semantic state, active allocation namespace, counter state, and
+allocation authority.
+
+Normal-fork creation is therefore atomic with respect to creation of the new
+lineage.
+
+---
+
+## MNIR-PSI-102 — Incomplete internal generation
+
+If generation of one internal candidate succeeds but another identity
+required for the same new lineage fails before that lineage becomes
+observable, the incomplete lineage MUST NOT become semantic Program state or
+expose partial allocation authority.
+
+An unused internal random candidate produced during such an attempt is not a
+persistent semantic identity and need not be retained.
+
+---
+
+## MNIR-PSI-103 — Identity-generation retries
+
+An implementation MAY retry after a locally detected candidate collision or
+provider failure where appropriate. The retry strategy and retry limit are
+implementation-defined.
+
+An implementation MUST NOT claim that local collision detection establishes
+the absence of collisions among independent processes. The coordination-free
+collision-resistance requirements remain authoritative.
+
+---
+
+## MNIR-PSI-104 — Existing-lineage transaction allocation
+
+Fresh `ProgramId` or `AllocationNamespaceId` generation is required only when
+creating a new Program lineage or a normal fork in Persistent Semantic
+Identity 0.1.
+
+Ordinary Module, Function, Parameter, Block, and Expression creation within
+an existing lineage MUST allocate through that lineage's active
+namespace/counter authority and MUST NOT require fresh entropy. Identity-
+generation failure therefore cannot arise from those ordinary
+`MutationTransaction` allocation operations, and this specification defines
+no transaction-poisoning behavior for such a failure.
 
 ---
 
