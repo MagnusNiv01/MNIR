@@ -8,3 +8,4 @@ ADRs do not define MNIR language semantics unless the normative specification ex
 
 - [`0001-value-identity-and-sequencing.md`](0001-value-identity-and-sequencing.md) — accepts `ExpressionId` as local computed-value identity, preserves pure Expression DAG semantics, separates frontend names from semantic references, and defers the explicit sequencing model for future effects.
 - [`0002-explicit-effect-sequencing.md`](0002-explicit-effect-sequencing.md) — selects a separate Block-local ordered `EffectSequence` for future observable effects while retaining the unordered pure Expression dependency DAG and unified `ExpressionId` identity.
+- [`0003-persistent-semantic-identity-forks-and-merge.md`](0003-persistent-semantic-identity-forks-and-merge.md) — selects persistent namespaced entity identities, requires normal forks to preserve inherited IDs, and establishes the identity foundation for future serialization, semantic diff, and merge.

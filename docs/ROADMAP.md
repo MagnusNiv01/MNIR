@@ -84,7 +84,10 @@ Completed:
 - Value Identity and Sequencing ADRs, establishing `ExpressionId` as local value identity and selecting a separate Block-local total order for future effectful Expressions.
 - Function Calls and Sequencing Foundations 0.1, including direct effectful Call Expressions, explicit Block-local `EffectSequence` order, and semantic verification rule set V0.4.
 
-The next implementation milestone is Domain Types in the Safe Domain Model.
+The persistent semantic identity architecture is now accepted in
+[ADR 0003](adr/0003-persistent-semantic-identity-forks-and-merge.md). The next
+normative and implementation milestone is Persistent Semantic Identity 0.1,
+before Domain Types in the Safe Domain Model.
 
 The normative [Function Calls and Sequencing Foundations 0.1 specification](specification/09-function-calls-and-sequencing-foundations.md)
 defines Function Calls together with the first concrete use of
@@ -97,8 +100,16 @@ Current direction:
 Conditional Control Flow              Done
 Value Identity & Sequencing ADRs      Done
 Function Calls & Sequencing           Done
-Domain Types                          Next
+Persistent Semantic Identity ADR     Done
+Persistent Semantic Identity         Next
+Domain Types                         Planned
 ```
+
+Persistent Semantic Identity is intentionally being resolved before canonical
+serialization and before further semantic identity categories proliferate. It
+will establish fork-preserved entity identity, coordination-free allocation,
+and persistent non-reuse as the foundation for later serialization, packages,
+semantic diff, and merge.
 
 The milestone is the ability to represent non-trivial multi-Function logic with conditions and local computation.
 
@@ -220,10 +231,17 @@ Canonical MNIR serialization is planned with these goals:
 - semantic round-trip;
 - a versioned format;
 - stable semantic IDs;
-- preservation of identity allocation history where required;
+- preservation of allocation namespace state required for continued mutation;
 - a Git-friendly representation;
 - independence from Rust `HashMap` iteration order;
-- canonical representation of equivalent MNIR state.
+- canonical representation of the same MNIR identity state.
+
+The namespaced persistent identity model selected by
+[ADR 0003](adr/0003-persistent-semantic-identity-forks-and-merge.md) is a
+prerequisite for this work. Canonical serialization must preserve identity and
+the allocation state required for continued mutation; it does not require
+independently constructed Programs with different entity identities to have
+identical encodings.
 
 The intended flow is:
 
