@@ -23,14 +23,19 @@ This repository uses specification-driven development. These instructions apply 
 - Human-readable source code is a presentation or frontend form; it is not intended to become the canonical program representation.
 - Avoid dependencies unless there is a clear technical reason.
 
-## Direct external dependency governance
+## External dependency governance
 
-An agent MUST NOT add, remove, upgrade, downgrade, or change features of a
-direct external dependency unless explicitly mandated by the task or an
-authoritative specification.
+An agent MUST NOT add, remove, upgrade, downgrade, change features of, or
+change the referenced version of either:
 
-If a direct external dependency change appears technically necessary but is
-not explicitly authorized, the agent MUST report:
+1. a direct external package dependency; or
+2. an externally hosted CI/workflow action
+
+unless explicitly mandated by the task or an authoritative repository rule or
+specification.
+
+If such a dependency or action change appears technically necessary but is not
+explicitly authorized, the agent MUST report:
 
 ```text
 DEPENDENCY DECISION REQUIRED
@@ -41,9 +46,40 @@ Alternatives:
 Security/portability implications:
 ```
 
-The agent MUST then stop before making that dependency change. Transitive
-`Cargo.lock` changes caused by an already-authorized direct dependency change
-do not require separate approval, but MUST be reported.
+The agent MUST then stop before making that dependency or action change.
+Transitive `Cargo.lock` changes caused by an already-authorized direct package
+dependency change do not require separate approval, but MUST be reported.
+
+Local `run:` shell commands in a workflow are not external GitHub Actions. The
+repository's initial CI workflow is explicitly authorized to use
+`actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (`v7.0.1`).
+That authorization does not authorize later version changes.
+
+## Pull-request integration workflow
+
+Changes destined for `main` MUST normally follow this integration sequence:
+
+```text
+task branch
+    ↓
+local validation
+    ↓
+push branch
+    ↓
+pull request targeting main
+    ↓
+CI passes
+    ↓
+merge
+```
+
+Direct pushes to `main` are not the normal permitted integration path. Changes
+should be merged to `main` through a pull request. Once the GitHub repository
+ruleset is enabled, its required CI check MUST be green before merge.
+
+This workflow introduces no mandatory human approval count. Pull-request
+review remains encouraged as a review surface, especially for agent-generated
+changes. No branch-naming convention beyond using a task branch is introduced.
 
 ## Documentation freshness before commits
 
