@@ -109,7 +109,8 @@ Persistent Semantic Identity         Done
 Domain Type Foundations Spec         Done
 Domain Type Foundations Impl         Done
 Canonical Persistence ADR            Done
-Canonical Serialization              Next
+Canonical Serialization Spec         Current
+Canonical Serialization Impl         Next
 Security Foundations                 Planned
 ```
 
@@ -246,8 +247,9 @@ presentation, entity-allocation, and revision-continuation state, an isolated
 future `mnir-format` layer, and deterministic CBOR carrying an explicit MNIR
 wire schema.
 
-Canonical Serialization and Deserialization 0.1 is the next planned normative
-and implementation milestone, with these goals:
+Canonical Serialization and Deserialization 0.1 is the current normative
+specification milestone. Its implementation is the next milestone, with these
+goals:
 
 - deterministic serialization;
 - semantic round-trip;
@@ -476,7 +478,8 @@ This release boundary does not imply that these capabilities will never be devel
 | Domain Type Foundations specification | Done |
 | Domain Type Foundations implementation | Done |
 | Canonical Persistence ADR | Done |
-| Canonical Serialization and Deserialization | Next |
+| Canonical Serialization and Deserialization specification | Current |
+| Canonical Serialization and Deserialization implementation | Next |
 | Security Foundations | Planned |
 | Effects | Planned |
 | Contracts | Planned |
