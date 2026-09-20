@@ -1,10 +1,12 @@
 use mnir_core::{IntrinsicType, MnirProgram};
 
-const ALL_INTRINSIC_TYPES: [IntrinsicType; 4] = [
+const ALL_INTRINSIC_TYPES: [IntrinsicType; 6] = [
     IntrinsicType::Int32,
     IntrinsicType::Int64,
     IntrinsicType::Bool,
     IntrinsicType::Unit,
+    IntrinsicType::Text,
+    IntrinsicType::Bytes,
 ];
 
 // An exhaustive match is compile-time evidence that the closed public
@@ -16,6 +18,8 @@ fn semantic_name(intrinsic: &IntrinsicType) -> &'static str {
         IntrinsicType::Int64 => "Int64",
         IntrinsicType::Bool => "Bool",
         IntrinsicType::Unit => "Unit",
+        IntrinsicType::Text => "Text",
+        IntrinsicType::Bytes => "Bytes",
     }
 }
 
@@ -25,10 +29,10 @@ fn new_program() -> MnirProgram {
 
 // AR-TYPE-001; MNIR-TYPE-001, MNIR-TYPE-002.
 #[test]
-fn ar_type_001_exposes_exactly_the_four_intrinsic_types() {
+fn ar_type_001_exposes_the_current_closed_intrinsic_set() {
     let names = ALL_INTRINSIC_TYPES.map(|intrinsic| semantic_name(&intrinsic));
 
-    assert_eq!(names, ["Int32", "Int64", "Bool", "Unit"]);
+    assert_eq!(names, ["Int32", "Int64", "Bool", "Unit", "Text", "Bytes"]);
 }
 
 // AR-TYPE-002; MNIR-TYPE-003, MNIR-TYPE-006, MNIR-TYPE-007.
@@ -59,8 +63,8 @@ fn ar_type_003_intrinsic_identity_is_independent_of_programs_and_revisions() {
     assert!(before_revision_change == after_revision_change);
 }
 
-// AR-TYPE-004; MNIR-TYPE-004. Construction requires neither a Program nor an
-// MNIR TypeId, and this increment introduces no TypeId API.
+// AR-TYPE-004; MNIR-TYPE-004. Intrinsic construction requires neither a
+// Program nor a TypeId; the later Domain Type API does not change that fact.
 #[test]
 fn ar_type_004_intrinsic_types_require_no_type_id() {
     let intrinsic = IntrinsicType::Bool;

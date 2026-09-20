@@ -1,6 +1,6 @@
 use mnir_core::{
     ExpressionKind, ExpressionTypeError, IntrinsicType, MnirProgram, MutationError,
-    StructuralError, Terminator, TransactionState,
+    StructuralError, Terminator, TransactionState, ValueType,
 };
 
 // AR-CALL-001 through AR-CALL-005, AR-CALL-009 through AR-CALL-011,
@@ -36,7 +36,10 @@ fn calls_preserve_semantic_data_and_support_required_target_shapes() {
         .unwrap();
     tx.set_return(block, call).unwrap();
 
-    assert_eq!(tx.expression_type(call), Some(Ok(IntrinsicType::Int32)));
+    assert_eq!(
+        tx.expression_type(call),
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
+    );
     assert!(matches!(
         tx.expression(call).unwrap().kind(),
         ExpressionKind::Call { target: actual, arguments }
@@ -184,7 +187,10 @@ fn target_type_is_live_and_dangling_targets_are_inspectable_and_repairable() {
     let mut tx = program.begin_transaction();
     tx.set_function_return_type(target, IntrinsicType::Int64)
         .unwrap();
-    assert_eq!(tx.expression_type(call), Some(Ok(IntrinsicType::Int64)));
+    assert_eq!(
+        tx.expression_type(call),
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int64)))
+    );
     tx.commit().unwrap();
     assert_eq!(program.expression(call).unwrap().id(), call);
     let mut module_removal_case = program.snapshot().fork().unwrap();

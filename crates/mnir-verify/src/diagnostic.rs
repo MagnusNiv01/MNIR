@@ -1,9 +1,9 @@
 use std::fmt;
 
-use mnir_core::{BlockId, ExpressionId, FunctionId, IntrinsicType};
+use mnir_core::{BlockId, ExpressionId, FunctionId, IntrinsicType, TypeId, ValueType};
 
 /// Stable machine-readable diagnostic categories defined by verification rule
-/// sets V0_1 through V0_4.
+/// sets V0_1 through V0_5.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticCode {
     ArithmeticOperandTypeUnavailable,
@@ -19,6 +19,18 @@ pub enum DiagnosticCode {
     CallArgumentCountMismatch,
     CallArgumentTypeUnavailable,
     CallArgumentTypeMismatch,
+    DomainConstructSourceTypeUnavailable,
+    DomainConstructRepresentationMismatch,
+    DomainProjectSourceTypeUnavailable,
+    DomainProjectSourceNotDomain,
+    ArithmeticOperandValueTypeMismatch,
+    ArithmeticUnsupportedValueType,
+    ComparisonOperandValueTypeMismatch,
+    ComparisonUnsupportedValueType,
+    ReturnValueTypeMismatch,
+    BranchConditionValueTypeNotBool,
+    ControlFlowReturnValueTypeMismatch,
+    CallArgumentValueTypeMismatch,
 }
 
 impl DiagnosticCode {
@@ -39,6 +51,18 @@ impl DiagnosticCode {
             Self::CallArgumentCountMismatch => "MNIR-DIAG-011",
             Self::CallArgumentTypeUnavailable => "MNIR-DIAG-012",
             Self::CallArgumentTypeMismatch => "MNIR-DIAG-013",
+            Self::DomainConstructSourceTypeUnavailable => "MNIR-DIAG-014",
+            Self::DomainConstructRepresentationMismatch => "MNIR-DIAG-015",
+            Self::DomainProjectSourceTypeUnavailable => "MNIR-DIAG-016",
+            Self::DomainProjectSourceNotDomain => "MNIR-DIAG-017",
+            Self::ArithmeticOperandValueTypeMismatch => "MNIR-DIAG-018",
+            Self::ArithmeticUnsupportedValueType => "MNIR-DIAG-019",
+            Self::ComparisonOperandValueTypeMismatch => "MNIR-DIAG-020",
+            Self::ComparisonUnsupportedValueType => "MNIR-DIAG-021",
+            Self::ReturnValueTypeMismatch => "MNIR-DIAG-022",
+            Self::BranchConditionValueTypeNotBool => "MNIR-DIAG-023",
+            Self::ControlFlowReturnValueTypeMismatch => "MNIR-DIAG-024",
+            Self::CallArgumentValueTypeMismatch => "MNIR-DIAG-025",
         }
     }
 }
@@ -49,7 +73,7 @@ impl fmt::Display for DiagnosticCode {
     }
 }
 
-/// The only diagnostic severity defined by V0_1 through V0_4.
+/// The only diagnostic severity defined by V0_1 through V0_5.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticSeverity {
     Error,
@@ -73,6 +97,14 @@ pub struct CallArgumentTypeMismatch {
     pub argument_index: usize,
     pub expected_type: IntrinsicType,
     pub actual_type: IntrinsicType,
+}
+
+/// One zero-based Call mismatch whose payload can represent Domain types.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CallArgumentValueTypeMismatch {
+    pub argument_index: usize,
+    pub expected_type: ValueType,
+    pub actual_type: ValueType,
 }
 
 /// One semantic verification failure with its complete normative payload.
@@ -140,6 +172,68 @@ pub enum Diagnostic {
         function_id: FunctionId,
         mismatches: Vec<CallArgumentTypeMismatch>,
     },
+    DomainConstructSourceTypeUnavailable {
+        expression_id: ExpressionId,
+        type_id: TypeId,
+        source_expression_id: ExpressionId,
+    },
+    DomainConstructRepresentationMismatch {
+        expression_id: ExpressionId,
+        type_id: TypeId,
+        source_expression_id: ExpressionId,
+        expected_representation: IntrinsicType,
+        actual_type: ValueType,
+    },
+    DomainProjectSourceTypeUnavailable {
+        expression_id: ExpressionId,
+        source_expression_id: ExpressionId,
+    },
+    DomainProjectSourceNotDomain {
+        expression_id: ExpressionId,
+        source_expression_id: ExpressionId,
+        actual_type: ValueType,
+    },
+    ArithmeticOperandValueTypeMismatch {
+        expression_id: ExpressionId,
+        left_type: ValueType,
+        right_type: ValueType,
+    },
+    ArithmeticUnsupportedValueType {
+        expression_id: ExpressionId,
+        operand_type: ValueType,
+    },
+    ComparisonOperandValueTypeMismatch {
+        expression_id: ExpressionId,
+        left_type: ValueType,
+        right_type: ValueType,
+    },
+    ComparisonUnsupportedValueType {
+        expression_id: ExpressionId,
+        operand_type: ValueType,
+    },
+    ReturnValueTypeMismatch {
+        function_id: FunctionId,
+        return_expression_id: ExpressionId,
+        expected_type: ValueType,
+        actual_type: ValueType,
+    },
+    BranchConditionValueTypeNotBool {
+        block_id: BlockId,
+        condition_expression_id: ExpressionId,
+        actual_type: ValueType,
+    },
+    ControlFlowReturnValueTypeMismatch {
+        function_id: FunctionId,
+        block_id: BlockId,
+        return_expression_id: ExpressionId,
+        expected_type: ValueType,
+        actual_type: ValueType,
+    },
+    CallArgumentValueTypeMismatch {
+        expression_id: ExpressionId,
+        function_id: FunctionId,
+        mismatches: Vec<CallArgumentValueTypeMismatch>,
+    },
 }
 
 impl Diagnostic {
@@ -176,6 +270,40 @@ impl Diagnostic {
             Self::CallArgumentCountMismatch { .. } => DiagnosticCode::CallArgumentCountMismatch,
             Self::CallArgumentTypeUnavailable { .. } => DiagnosticCode::CallArgumentTypeUnavailable,
             Self::CallArgumentTypeMismatch { .. } => DiagnosticCode::CallArgumentTypeMismatch,
+            Self::DomainConstructSourceTypeUnavailable { .. } => {
+                DiagnosticCode::DomainConstructSourceTypeUnavailable
+            }
+            Self::DomainConstructRepresentationMismatch { .. } => {
+                DiagnosticCode::DomainConstructRepresentationMismatch
+            }
+            Self::DomainProjectSourceTypeUnavailable { .. } => {
+                DiagnosticCode::DomainProjectSourceTypeUnavailable
+            }
+            Self::DomainProjectSourceNotDomain { .. } => {
+                DiagnosticCode::DomainProjectSourceNotDomain
+            }
+            Self::ArithmeticOperandValueTypeMismatch { .. } => {
+                DiagnosticCode::ArithmeticOperandValueTypeMismatch
+            }
+            Self::ArithmeticUnsupportedValueType { .. } => {
+                DiagnosticCode::ArithmeticUnsupportedValueType
+            }
+            Self::ComparisonOperandValueTypeMismatch { .. } => {
+                DiagnosticCode::ComparisonOperandValueTypeMismatch
+            }
+            Self::ComparisonUnsupportedValueType { .. } => {
+                DiagnosticCode::ComparisonUnsupportedValueType
+            }
+            Self::ReturnValueTypeMismatch { .. } => DiagnosticCode::ReturnValueTypeMismatch,
+            Self::BranchConditionValueTypeNotBool { .. } => {
+                DiagnosticCode::BranchConditionValueTypeNotBool
+            }
+            Self::ControlFlowReturnValueTypeMismatch { .. } => {
+                DiagnosticCode::ControlFlowReturnValueTypeMismatch
+            }
+            Self::CallArgumentValueTypeMismatch { .. } => {
+                DiagnosticCode::CallArgumentValueTypeMismatch
+            }
         }
     }
 
@@ -197,15 +325,27 @@ impl Diagnostic {
             | Self::ComparisonUnsupportedOperandType { expression_id, .. }
             | Self::CallArgumentCountMismatch { expression_id, .. }
             | Self::CallArgumentTypeUnavailable { expression_id, .. }
-            | Self::CallArgumentTypeMismatch { expression_id, .. } => {
+            | Self::CallArgumentTypeMismatch { expression_id, .. }
+            | Self::DomainConstructSourceTypeUnavailable { expression_id, .. }
+            | Self::DomainConstructRepresentationMismatch { expression_id, .. }
+            | Self::DomainProjectSourceTypeUnavailable { expression_id, .. }
+            | Self::DomainProjectSourceNotDomain { expression_id, .. }
+            | Self::ArithmeticOperandValueTypeMismatch { expression_id, .. }
+            | Self::ArithmeticUnsupportedValueType { expression_id, .. }
+            | Self::ComparisonOperandValueTypeMismatch { expression_id, .. }
+            | Self::ComparisonUnsupportedValueType { expression_id, .. }
+            | Self::CallArgumentValueTypeMismatch { expression_id, .. } => {
                 DiagnosticPrimarySubject::Expression(*expression_id)
             }
-            Self::ReturnTypeMismatch { function_id, .. } => {
+            Self::ReturnTypeMismatch { function_id, .. }
+            | Self::ReturnValueTypeMismatch { function_id, .. } => {
                 DiagnosticPrimarySubject::Function(*function_id)
             }
             Self::BranchConditionTypeUnavailable { block_id, .. }
             | Self::BranchConditionNotBool { block_id, .. }
-            | Self::ControlFlowReturnTypeMismatch { block_id, .. } => {
+            | Self::ControlFlowReturnTypeMismatch { block_id, .. }
+            | Self::BranchConditionValueTypeNotBool { block_id, .. }
+            | Self::ControlFlowReturnValueTypeMismatch { block_id, .. } => {
                 DiagnosticPrimarySubject::Block(*block_id)
             }
         }

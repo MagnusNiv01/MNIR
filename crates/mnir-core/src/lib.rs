@@ -4,7 +4,7 @@
 //! 0.1, Functions and Parameters 0.1, and Expressions and Basic Function
 //! Bodies 0.1, Arithmetic Expressions 0.1, Comparison Expressions 0.1, and
 //! Conditional Control Flow 0.1, Function Calls and Sequencing Foundations
-//! 0.1, and Persistent Semantic Identity 0.1.
+//! 0.1, Persistent Semantic Identity 0.1, and Domain Type Foundations 0.1.
 //!
 //! This crate implements the Program, Module, identity, revision, presentation
 //! metadata, snapshot, fork, and controlled mutation concepts defined by
@@ -25,6 +25,8 @@
 //! Persistent namespaced entity identity, allocation authority, snapshots,
 //! and identity-preserving normal forks are defined by
 //! `docs/specification/10-persistent-semantic-identity.md`.
+//! Domain Types, generalized value typing, and Text/Bytes values are defined
+//! by `docs/specification/11-domain-type-foundations.md`.
 //!
 //! It intentionally contains no semantic verifier, EasyH support, general
 //! type abstraction, arithmetic or comparison evaluation, loops, Call
@@ -34,15 +36,17 @@ mod ids;
 mod intrinsic;
 mod presentation;
 mod program;
+mod value_type;
 
 pub use ids::{
     AllocationCounterState, AllocationNamespaceId, BlockId, ExpressionId, FunctionId,
-    IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId,
+    IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId, TypeId,
 };
 pub use intrinsic::IntrinsicType;
 pub use presentation::PresentationMetadata;
 pub use program::{
-    Block, Expression, ExpressionKind, ExpressionTypeError, Function, FunctionBody, MnirProgram,
-    Module, MutationError, MutationTransaction, Parameter, ProgramSnapshot, StructuralError,
-    Terminator, TransactionState,
+    Block, DomainType, Expression, ExpressionKind, ExpressionTypeError, Function, FunctionBody,
+    MnirProgram, Module, MutationError, MutationTransaction, Parameter, ProgramSnapshot,
+    StructuralError, Terminator, TransactionState,
 };
+pub use value_type::ValueType;

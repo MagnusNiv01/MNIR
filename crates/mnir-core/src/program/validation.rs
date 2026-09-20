@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::ValueType;
 use crate::ids::{BlockId, ExpressionId, FunctionId, ModuleId};
 
 use super::body::{Block, ExpressionKind, Terminator};
 use super::error::StructuralError;
-use super::model::{Module, RevisionState, find_function};
+use super::model::{Module, RevisionState, find_domain_type, find_function};
 
 pub(super) fn validate_revision_state(state: &RevisionState) -> Result<(), StructuralError> {
     validate_modules(&state.modules)
@@ -12,6 +13,7 @@ pub(super) fn validate_revision_state(state: &RevisionState) -> Result<(), Struc
 
 pub(super) fn validate_modules(modules: &HashMap<ModuleId, Module>) -> Result<(), StructuralError> {
     let mut seen_function_ids = HashSet::new();
+    let mut seen_type_ids = HashSet::new();
     let mut seen_parameter_ids = HashSet::new();
     let mut seen_block_ids = HashSet::new();
     let mut seen_expression_ids = HashSet::new();
@@ -22,6 +24,18 @@ pub(super) fn validate_modules(modules: &HashMap<ModuleId, Module>) -> Result<()
                 collection_id,
                 module_id: module.id,
             });
+        }
+
+        for (&type_collection_id, domain_type) in &module.domain_types {
+            if type_collection_id != domain_type.id {
+                return Err(StructuralError::DomainTypeIdentityMismatch {
+                    collection_id: type_collection_id,
+                    type_id: domain_type.id,
+                });
+            }
+            if !seen_type_ids.insert(domain_type.id) {
+                return Err(StructuralError::DuplicateTypeIdentity(domain_type.id));
+            }
         }
 
         for (&function_collection_id, function) in &module.functions {
@@ -35,10 +49,13 @@ pub(super) fn validate_modules(modules: &HashMap<ModuleId, Module>) -> Result<()
                 return Err(StructuralError::DuplicateFunctionIdentity(function.id));
             }
 
+            validate_value_type(modules, function.return_type)?;
+
             for parameter in &function.parameters {
                 if !seen_parameter_ids.insert(parameter.id) {
                     return Err(StructuralError::DuplicateParameterIdentity(parameter.id));
                 }
+                validate_value_type(modules, parameter.value_type)?;
             }
 
             let Some(body) = &function.body else {
@@ -134,6 +151,30 @@ fn validate_block_expressions(
                 function_id: function.id,
             });
         }
+        if let ExpressionKind::DomainConstruct { type_id, value } = &expression.kind {
+            if find_domain_type(modules, *type_id).is_none() {
+                return Err(StructuralError::DanglingDomainConstructTarget {
+                    expression_id: expression.id,
+                    type_id: *type_id,
+                });
+            }
+            if !block.expressions.contains_key(value) {
+                return Err(StructuralError::DomainExpressionSourceNotInBlock {
+                    expression_id: expression.id,
+                    source_id: *value,
+                    block_id: block.id,
+                });
+            }
+        }
+        if let ExpressionKind::DomainProject { value } = &expression.kind
+            && !block.expressions.contains_key(value)
+        {
+            return Err(StructuralError::DomainExpressionSourceNotInBlock {
+                expression_id: expression.id,
+                source_id: *value,
+                block_id: block.id,
+            });
+        }
         if let Some((left, right)) = expression.kind.arithmetic_operands() {
             for operand_id in [left, right] {
                 if !block.expressions.contains_key(&operand_id) {
@@ -173,6 +214,18 @@ fn validate_block_expressions(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_value_type(
+    modules: &HashMap<ModuleId, Module>,
+    value_type: ValueType,
+) -> Result<(), StructuralError> {
+    if let ValueType::Domain(type_id) = value_type
+        && find_domain_type(modules, type_id).is_none()
+    {
+        return Err(StructuralError::DanglingValueType(type_id));
     }
     Ok(())
 }
@@ -450,6 +503,145 @@ mod tests {
 
         assert_eq!(program.revision_id(), source_revision_id);
         assert_eq!(program.module(module_id).unwrap().function_count(), 0);
+        assert!(program.validate_structure().is_ok());
+    }
+
+    // AR-DOMAIN-061/-069 and MNIR-DOMAIN-019/-065/-066. Domain Type
+    // ownership and identity are defended internally without exposing mutable
+    // collections through the production API.
+    #[test]
+    fn duplicate_domain_type_ownership_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let mut setup = program.begin_transaction();
+        let first_module = setup.add_module().unwrap();
+        let second_module = setup.add_module().unwrap();
+        let type_id = setup
+            .add_domain_type(first_module, IntrinsicType::Int64)
+            .unwrap();
+        setup.commit().unwrap();
+        let revision = program.revision_id();
+
+        let mut transaction = program.begin_transaction();
+        let duplicate = transaction
+            .working_modules_mut()
+            .get(&first_module)
+            .unwrap()
+            .domain_types
+            .get(&type_id)
+            .unwrap()
+            .copied();
+        transaction
+            .working_modules_mut()
+            .get_mut(&second_module)
+            .unwrap()
+            .domain_types
+            .insert(type_id, duplicate);
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::DuplicateTypeIdentity(type_id))
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        drop(transaction);
+        assert_eq!(program.revision_id(), revision);
+        assert_eq!(
+            program.module(second_module).unwrap().domain_type_count(),
+            0
+        );
+        assert!(program.validate_structure().is_ok());
+    }
+
+    // AR-DOMAIN-028/-069: Domain dependency edges participate in the same
+    // acyclic graph as arithmetic and comparison dependencies.
+    #[test]
+    fn mixed_domain_and_arithmetic_dependency_cycle_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let revision = program.revision_id();
+        let mut transaction = program.begin_transaction();
+        let module = transaction.add_module().unwrap();
+        let domain = transaction
+            .add_domain_type(module, IntrinsicType::Int64)
+            .unwrap();
+        let function = transaction
+            .add_function(module, IntrinsicType::Int64)
+            .unwrap();
+        let block_id = transaction.create_function_body(function).unwrap();
+        let arithmetic = transaction.add_int64_literal(block_id, 1).unwrap();
+        let construct = transaction
+            .add_domain_construct(block_id, domain, arithmetic)
+            .unwrap();
+        let project = transaction.add_domain_project(block_id, construct).unwrap();
+        transaction.set_return(block_id, project).unwrap();
+
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .functions
+            .get_mut(&function)
+            .unwrap()
+            .body
+            .as_mut()
+            .unwrap()
+            .blocks
+            .get_mut(&block_id)
+            .unwrap()
+            .expressions
+            .get_mut(&arithmetic)
+            .unwrap()
+            .kind = ExpressionKind::Add {
+            left: project,
+            right: project,
+        };
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::CyclicExpressionDependency(
+                block_id
+            ))
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        drop(transaction);
+        assert_eq!(program.revision_id(), revision);
+        assert!(program.validate_structure().is_ok());
+    }
+
+    // AR-DOMAIN-069: a DomainConstruct target corrupted below the controlled
+    // mutation layer is structural, never a semantic-verifier diagnostic.
+    #[test]
+    fn dangling_domain_construct_target_cannot_commit() {
+        let mut program = MnirProgram::new().unwrap();
+        let mut transaction = program.begin_transaction();
+        let module = transaction.add_module().unwrap();
+        let domain = transaction
+            .add_domain_type(module, IntrinsicType::Int64)
+            .unwrap();
+        let function = transaction
+            .add_function(module, IntrinsicType::Unit)
+            .unwrap();
+        let block = transaction.create_function_body(function).unwrap();
+        let source = transaction.add_int64_literal(block, 1).unwrap();
+        let construct = transaction
+            .add_domain_construct(block, domain, source)
+            .unwrap();
+        let unit = transaction.add_unit_literal(block).unwrap();
+        transaction.set_return(block, unit).unwrap();
+        transaction
+            .working_modules_mut()
+            .get_mut(&module)
+            .unwrap()
+            .domain_types
+            .remove(&domain);
+
+        assert_eq!(
+            transaction.commit().unwrap_err(),
+            MutationError::StructuralViolation(StructuralError::DanglingDomainConstructTarget {
+                expression_id: construct,
+                type_id: domain,
+            })
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        drop(transaction);
         assert!(program.validate_structure().is_ok());
     }
 

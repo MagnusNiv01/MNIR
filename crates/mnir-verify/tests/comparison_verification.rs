@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use mnir_core::{FunctionId, IntrinsicType, MnirProgram, ModuleId, ParameterId, ProgramSnapshot};
+use mnir_core::{
+    FunctionId, IntrinsicType, MnirProgram, ModuleId, ParameterId, ProgramSnapshot, ValueType,
+};
 use mnir_verify::{
     Diagnostic, DiagnosticCode, DiagnosticPrimarySubject, DiagnosticSeverity, VerificationError,
     VerificationFailure, VerificationRuleSet, verify, verify_with_rule_set,
@@ -90,11 +92,11 @@ fn v0_2_verifies_mixed_graphs_and_binds_explicit_rule_set_identity() {
     assert_eq!(verified.snapshot().revision_id(), snapshot.revision_id());
     assert_eq!(
         snapshot.expression_type(arithmetic_to_comparison),
-        Some(Ok(IntrinsicType::Bool))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Bool)))
     );
     assert_eq!(
         snapshot.expression_type(comparison_to_equality),
-        Some(Ok(IntrinsicType::Bool))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Bool)))
     );
 
     let empty = MnirProgram::new().unwrap().snapshot();

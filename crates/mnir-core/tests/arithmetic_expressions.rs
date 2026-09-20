@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use mnir_core::{
     BlockId, ExpressionId, ExpressionKind, ExpressionTypeError, FunctionId, IntrinsicType,
-    MnirProgram, ModuleId, MutationError, ParameterId, TransactionState,
+    MnirProgram, ModuleId, MutationError, ParameterId, TransactionState, ValueType,
 };
 
 fn add_module_and_function(
@@ -109,12 +109,12 @@ fn all_arithmetic_operators_preserve_identity_operands_and_supported_types() {
     for expression_id in [add, subtract, multiply, divide, remainder] {
         assert_eq!(
             program.expression_type(expression_id),
-            Some(Ok(IntrinsicType::Int32))
+            Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
         );
     }
     assert_eq!(
         program.expression_type(add_i64),
-        Some(Ok(IntrinsicType::Int64))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int64)))
     );
 }
 
@@ -141,6 +141,16 @@ fn mixed_integer_arithmetic_commits_both_orientations_as_type_mismatch() {
             program.expression_type(expression_id),
             Some(Err(ExpressionTypeError::OperandTypeMismatch {
                 expression_id,
+                left_type: if expression_id == first {
+                    ValueType::Intrinsic(IntrinsicType::Int32)
+                } else {
+                    ValueType::Intrinsic(IntrinsicType::Int64)
+                },
+                right_type: if expression_id == first {
+                    ValueType::Intrinsic(IntrinsicType::Int64)
+                } else {
+                    ValueType::Intrinsic(IntrinsicType::Int32)
+                },
             }))
         );
     }
@@ -171,6 +181,11 @@ fn bool_and_unit_arithmetic_are_structural_but_have_unsupported_type_outcomes() 
             program.expression_type(expression_id),
             Some(Err(ExpressionTypeError::UnsupportedOperandType {
                 expression_id,
+                operand_type: if expression_id == bool_add {
+                    ValueType::Intrinsic(IntrinsicType::Bool)
+                } else {
+                    ValueType::Intrinsic(IntrinsicType::Unit)
+                },
             }))
         );
     }
@@ -338,7 +353,7 @@ fn nested_ordered_and_identical_operands_are_valid_and_derived() {
 
     assert_eq!(
         program.expression_type(nested),
-        Some(Ok(IntrinsicType::Int32))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
     );
     assert_eq!(
         program.expression(forward).unwrap().kind(),
@@ -570,7 +585,10 @@ fn snapshots_and_forks_preserve_arithmetic_references() {
         fork.expression(add).unwrap().kind(),
         &ExpressionKind::Add { left, right }
     );
-    assert_eq!(fork.expression_type(add), Some(Ok(IntrinsicType::Int32)));
+    assert_eq!(
+        fork.expression_type(add),
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
+    );
     assert!(fork.validate_structure().is_ok());
     let mut transaction = fork.begin_transaction();
     transaction.remove_module(module_id).unwrap();
@@ -617,14 +635,17 @@ fn arithmetic_can_be_returned_and_return_mismatch_remains_structural() {
         program.block(add_block).unwrap().return_expression_id(),
         Some(add)
     );
-    assert_eq!(program.expression_type(add), Some(Ok(IntrinsicType::Int32)));
+    assert_eq!(
+        program.expression_type(add),
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
+    );
     assert_eq!(
         program.expression_type(mismatch_return),
-        Some(Ok(IntrinsicType::Int64))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int64)))
     );
     assert_eq!(
         program.function(mismatch_function).unwrap().return_type(),
-        &IntrinsicType::Int32
+        &ValueType::Intrinsic(IntrinsicType::Int32)
     );
     assert!(program.validate_structure().is_ok());
 }
@@ -647,7 +668,10 @@ fn guaranteed_overflow_expression_is_representable_without_evaluation() {
         program.expression(maximum).unwrap().kind(),
         &ExpressionKind::Int32Literal(i32::MAX)
     );
-    assert_eq!(program.expression_type(add), Some(Ok(IntrinsicType::Int32)));
+    assert_eq!(
+        program.expression_type(add),
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
+    );
 }
 
 // AR-ARITH-024, AR-ARITH-025, and AR-ARITH-026 are conformance-inspection

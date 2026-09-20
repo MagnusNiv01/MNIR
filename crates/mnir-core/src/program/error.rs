@@ -1,8 +1,10 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::ValueType;
 use crate::ids::{
     BlockId, ExpressionId, FunctionId, IdentifierCategory, ModuleId, ParameterId, RevisionId,
+    TypeId,
 };
 
 /// Structural failures defined by `MNIR-CORE-040` and `MNIR-CORE-041`.
@@ -17,6 +19,11 @@ pub enum StructuralError {
         function_id: FunctionId,
     },
     DuplicateFunctionIdentity(FunctionId),
+    DomainTypeIdentityMismatch {
+        collection_id: TypeId,
+        type_id: TypeId,
+    },
+    DuplicateTypeIdentity(TypeId),
     DuplicateParameterIdentity(ParameterId),
     FunctionBodyHasNoBlocks(FunctionId),
     EntryBlockNotInBody {
@@ -55,6 +62,16 @@ pub enum StructuralError {
         expression_id: ExpressionId,
         parameter_id: ParameterId,
         function_id: FunctionId,
+    },
+    DanglingValueType(TypeId),
+    DanglingDomainConstructTarget {
+        expression_id: ExpressionId,
+        type_id: TypeId,
+    },
+    DomainExpressionSourceNotInBlock {
+        expression_id: ExpressionId,
+        source_id: ExpressionId,
+        block_id: BlockId,
     },
     ArithmeticOperandNotInBlock {
         expression_id: ExpressionId,
@@ -118,6 +135,19 @@ impl fmt::Display for StructuralError {
             ),
             Self::DuplicateFunctionIdentity(id) => {
                 write!(formatter, "function identity {id:?} occurs more than once")
+            }
+            Self::DomainTypeIdentityMismatch {
+                collection_id,
+                type_id,
+            } => write!(
+                formatter,
+                "Domain Type collection identity {collection_id:?} does not match contained identity {type_id:?}"
+            ),
+            Self::DuplicateTypeIdentity(id) => {
+                write!(
+                    formatter,
+                    "Domain Type identity {id:?} occurs more than once"
+                )
             }
             Self::DuplicateParameterIdentity(id) => {
                 write!(formatter, "parameter identity {id:?} occurs more than once")
@@ -196,6 +226,27 @@ impl fmt::Display for StructuralError {
             } => write!(
                 formatter,
                 "expression {expression_id:?} refers to parameter {parameter_id:?} not owned by function {function_id:?}"
+            ),
+            Self::DanglingValueType(type_id) => {
+                write!(
+                    formatter,
+                    "ValueType refers to missing Domain Type {type_id:?}"
+                )
+            }
+            Self::DanglingDomainConstructTarget {
+                expression_id,
+                type_id,
+            } => write!(
+                formatter,
+                "DomainConstruct expression {expression_id:?} targets missing Domain Type {type_id:?}"
+            ),
+            Self::DomainExpressionSourceNotInBlock {
+                expression_id,
+                source_id,
+                block_id,
+            } => write!(
+                formatter,
+                "Domain expression {expression_id:?} refers to source {source_id:?} not owned by block {block_id:?}"
             ),
             Self::ArithmeticOperandNotInBlock {
                 expression_id,
@@ -291,6 +342,7 @@ pub enum MutationError {
     IdentityCollision(IdentifierCategory),
     TransactionNotActive(TransactionState),
     UnknownModule(ModuleId),
+    UnknownType(TypeId),
     UnknownFunction(FunctionId),
     UnknownParameter(ParameterId),
     UnknownBlock(BlockId),
@@ -338,6 +390,7 @@ impl fmt::Display for MutationError {
                 write!(formatter, "transaction is not active: {state:?}")
             }
             Self::UnknownModule(id) => write!(formatter, "unknown module: {id:?}"),
+            Self::UnknownType(id) => write!(formatter, "unknown Domain Type: {id:?}"),
             Self::UnknownFunction(id) => write!(formatter, "unknown function: {id:?}"),
             Self::UnknownParameter(id) => write!(formatter, "unknown parameter: {id:?}"),
             Self::UnknownBlock(id) => write!(formatter, "unknown block: {id:?}"),
@@ -406,14 +459,30 @@ pub enum ExpressionTypeError {
         expression_id: ExpressionId,
         function_id: FunctionId,
     },
+    UnresolvedDomainType {
+        expression_id: ExpressionId,
+        type_id: TypeId,
+    },
     OperandTypeUnavailable {
         expression_id: ExpressionId,
     },
     OperandTypeMismatch {
         expression_id: ExpressionId,
+        left_type: ValueType,
+        right_type: ValueType,
     },
     UnsupportedOperandType {
         expression_id: ExpressionId,
+        operand_type: ValueType,
+    },
+    DomainProjectSourceTypeUnavailable {
+        expression_id: ExpressionId,
+        source_expression_id: ExpressionId,
+    },
+    DomainProjectSourceNotDomain {
+        expression_id: ExpressionId,
+        source_expression_id: ExpressionId,
+        actual_type: ValueType,
     },
 }
 
@@ -434,17 +503,46 @@ impl fmt::Display for ExpressionTypeError {
                 formatter,
                 "cannot derive type of expression {expression_id:?}: target function {function_id:?} does not resolve"
             ),
+            Self::UnresolvedDomainType {
+                expression_id,
+                type_id,
+            } => write!(
+                formatter,
+                "cannot derive type of expression {expression_id:?}: Domain Type {type_id:?} does not resolve"
+            ),
             Self::OperandTypeUnavailable { expression_id } => write!(
                 formatter,
                 "cannot derive type of expression {expression_id:?}: an operand type is unavailable"
             ),
-            Self::OperandTypeMismatch { expression_id } => write!(
+            Self::OperandTypeMismatch {
+                expression_id,
+                left_type,
+                right_type,
+            } => write!(
                 formatter,
-                "cannot derive type of expression {expression_id:?}: operand types differ"
+                "cannot derive type of expression {expression_id:?}: operand types {left_type:?} and {right_type:?} differ"
             ),
-            Self::UnsupportedOperandType { expression_id } => write!(
+            Self::UnsupportedOperandType {
+                expression_id,
+                operand_type,
+            } => write!(
                 formatter,
-                "cannot derive type of expression {expression_id:?}: the common operand type is unsupported"
+                "cannot derive type of expression {expression_id:?}: operand type {operand_type:?} is unsupported"
+            ),
+            Self::DomainProjectSourceTypeUnavailable {
+                expression_id,
+                source_expression_id,
+            } => write!(
+                formatter,
+                "cannot derive type of DomainProject {expression_id:?}: source {source_expression_id:?} has no available type"
+            ),
+            Self::DomainProjectSourceNotDomain {
+                expression_id,
+                source_expression_id,
+                actual_type,
+            } => write!(
+                formatter,
+                "cannot derive type of DomainProject {expression_id:?}: source {source_expression_id:?} has non-Domain type {actual_type:?}"
             ),
         }
     }
