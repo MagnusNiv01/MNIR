@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 //! Semantic verification and machine-readable diagnostics for MNIR rule sets
-//! V0_1, V0_2, V0_3, and V0_4.
+//! V0_1 through V0_5.
 //!
 //! Verification consumes an immutable [`mnir_core::ProgramSnapshot`], never
 //! mutates or repairs it, and either returns revision-bound [`VerifiedProgram`]
@@ -14,6 +14,8 @@
 //! rule sets and rejecting inapplicable CFG revisions before semantic work.
 //! V0_4 adds direct effectful Calls and argument diagnostics while preserving
 //! all earlier rule-set applicability boundaries.
+//! V0_5 adds Domain Types, generalized `ValueType` semantics, and Domain-aware
+//! diagnostics while keeping V0_1 through V0_4 immutable.
 //! The crate deliberately contains no evaluator, constant folder, arithmetic
 //! fault analysis, future verification domains, warning system, suppression
 //! profile, or generic source-location/node abstraction.
@@ -23,8 +25,8 @@ mod verified;
 mod verifier;
 
 pub use diagnostic::{
-    CallArgumentTypeMismatch, Diagnostic, DiagnosticCode, DiagnosticPrimarySubject,
-    DiagnosticSeverity,
+    CallArgumentTypeMismatch, CallArgumentValueTypeMismatch, Diagnostic, DiagnosticCode,
+    DiagnosticPrimarySubject, DiagnosticSeverity,
 };
 pub use verified::{VerificationRuleSet, VerifiedProgram};
 pub use verifier::{VerificationError, VerificationFailure, verify, verify_with_rule_set};

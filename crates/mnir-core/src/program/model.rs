@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::IntrinsicType;
 use crate::ids::{
     AllocationCounterState, AllocationNamespaceId, BlockId, ExpressionId, FunctionId,
-    IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId,
+    IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId, TypeId,
 };
 use crate::presentation::PresentationMetadata;
+use crate::{IntrinsicType, ValueType};
 
 use super::body::{Block, Expression, ExpressionKind, FunctionBody};
 use super::error::{ExpressionTypeError, MutationError, StructuralError};
@@ -19,15 +19,15 @@ const IDENTITY_GENERATION_ATTEMPTS: usize = 32;
 #[derive(Debug, Eq, PartialEq)]
 pub struct Parameter {
     pub(super) id: ParameterId,
-    pub(super) intrinsic_type: IntrinsicType,
+    pub(super) value_type: ValueType,
     pub(super) presentation: PresentationMetadata,
 }
 
 impl Parameter {
-    pub(super) fn new(id: ParameterId, intrinsic_type: IntrinsicType) -> Self {
+    pub(super) fn new(id: ParameterId, value_type: ValueType) -> Self {
         Self {
             id,
-            intrinsic_type,
+            value_type,
             presentation: PresentationMetadata::default(),
         }
     }
@@ -38,8 +38,8 @@ impl Parameter {
     }
 
     #[must_use]
-    pub const fn intrinsic_type(&self) -> &IntrinsicType {
-        &self.intrinsic_type
+    pub const fn value_type(&self) -> &ValueType {
+        &self.value_type
     }
 
     #[must_use]
@@ -50,7 +50,7 @@ impl Parameter {
     pub(super) fn copied(&self) -> Self {
         Self {
             id: self.id,
-            intrinsic_type: self.intrinsic_type.copied(),
+            value_type: self.value_type,
             presentation: self.presentation.copied(),
         }
     }
@@ -60,14 +60,14 @@ impl Parameter {
 #[derive(Debug, Eq, PartialEq)]
 pub struct Function {
     pub(super) id: FunctionId,
-    pub(super) return_type: IntrinsicType,
+    pub(super) return_type: ValueType,
     pub(super) parameters: Vec<Parameter>,
     pub(super) body: Option<FunctionBody>,
     pub(super) presentation: PresentationMetadata,
 }
 
 impl Function {
-    pub(super) fn new(id: FunctionId, return_type: IntrinsicType) -> Self {
+    pub(super) fn new(id: FunctionId, return_type: ValueType) -> Self {
         Self {
             id,
             return_type,
@@ -83,7 +83,7 @@ impl Function {
     }
 
     #[must_use]
-    pub const fn return_type(&self) -> &IntrinsicType {
+    pub const fn return_type(&self) -> &ValueType {
         &self.return_type
     }
 
@@ -120,9 +120,50 @@ impl Function {
     pub(super) fn copied(&self) -> Self {
         Self {
             id: self.id,
-            return_type: self.return_type.copied(),
+            return_type: self.return_type,
             parameters: self.parameters.iter().map(Parameter::copied).collect(),
             body: self.body.as_ref().map(FunctionBody::copied),
+            presentation: self.presentation.copied(),
+        }
+    }
+}
+
+/// A nominal Module-owned type with one current intrinsic representation.
+#[derive(Debug, Eq, PartialEq)]
+pub struct DomainType {
+    pub(super) id: TypeId,
+    pub(super) representation: IntrinsicType,
+    pub(super) presentation: PresentationMetadata,
+}
+
+impl DomainType {
+    pub(super) fn new(id: TypeId, representation: IntrinsicType) -> Self {
+        Self {
+            id,
+            representation,
+            presentation: PresentationMetadata::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> TypeId {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn representation(&self) -> IntrinsicType {
+        self.representation
+    }
+
+    #[must_use]
+    pub const fn presentation(&self) -> &PresentationMetadata {
+        &self.presentation
+    }
+
+    pub(super) fn copied(&self) -> Self {
+        Self {
+            id: self.id,
+            representation: self.representation,
             presentation: self.presentation.copied(),
         }
     }
@@ -133,6 +174,7 @@ impl Function {
 pub struct Module {
     pub(super) id: ModuleId,
     pub(super) functions: HashMap<FunctionId, Function>,
+    pub(super) domain_types: HashMap<TypeId, DomainType>,
     pub(super) presentation: PresentationMetadata,
 }
 
@@ -141,6 +183,7 @@ impl Module {
         Self {
             id,
             functions: HashMap::new(),
+            domain_types: HashMap::new(),
             presentation: PresentationMetadata::default(),
         }
     }
@@ -171,6 +214,21 @@ impl Module {
         self.functions.values()
     }
 
+    #[must_use]
+    pub fn domain_type_count(&self) -> usize {
+        self.domain_types.len()
+    }
+
+    #[must_use]
+    pub fn domain_type(&self, id: TypeId) -> Option<&DomainType> {
+        self.domain_types.get(&id)
+    }
+
+    /// Iteration order is not semantic (`MNIR-DOMAIN-020`).
+    pub fn domain_types(&self) -> impl Iterator<Item = &DomainType> {
+        self.domain_types.values()
+    }
+
     pub(super) fn copied(&self) -> Self {
         Self {
             id: self.id,
@@ -178,6 +236,11 @@ impl Module {
                 .functions
                 .iter()
                 .map(|(&id, function)| (id, function.copied()))
+                .collect(),
+            domain_types: self
+                .domain_types
+                .iter()
+                .map(|(&id, domain_type)| (id, domain_type.copied()))
                 .collect(),
             presentation: self.presentation.copied(),
         }
@@ -319,6 +382,11 @@ impl ProgramSnapshot {
     }
 
     #[must_use]
+    pub fn domain_type(&self, id: TypeId) -> Option<&DomainType> {
+        find_domain_type(&self.state.modules, id)
+    }
+
+    #[must_use]
     pub fn parameter(&self, id: ParameterId) -> Option<&Parameter> {
         find_parameter(&self.state.modules, id)
     }
@@ -337,7 +405,7 @@ impl ProgramSnapshot {
     pub fn expression_type(
         &self,
         id: ExpressionId,
-    ) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+    ) -> Option<Result<ValueType, ExpressionTypeError>> {
         derive_expression_type(&self.state.modules, id)
     }
 
@@ -449,6 +517,11 @@ impl MnirProgram {
     }
 
     #[must_use]
+    pub fn domain_type(&self, id: TypeId) -> Option<&DomainType> {
+        find_domain_type(&self.head.modules, id)
+    }
+
+    #[must_use]
     pub fn parameter(&self, id: ParameterId) -> Option<&Parameter> {
         find_parameter(&self.head.modules, id)
     }
@@ -467,7 +540,7 @@ impl MnirProgram {
     pub fn expression_type(
         &self,
         id: ExpressionId,
-    ) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+    ) -> Option<Result<ValueType, ExpressionTypeError>> {
         derive_expression_type(&self.head.modules, id)
     }
 
@@ -483,6 +556,24 @@ impl MnirProgram {
     pub fn validate_structure(&self) -> Result<(), StructuralError> {
         validate_revision_state(&self.head)
     }
+}
+
+pub(super) fn find_domain_type(
+    modules: &HashMap<ModuleId, Module>,
+    id: TypeId,
+) -> Option<&DomainType> {
+    modules
+        .values()
+        .find_map(|module| module.domain_types.get(&id))
+}
+
+pub(super) fn find_domain_type_mut(
+    modules: &mut HashMap<ModuleId, Module>,
+    id: TypeId,
+) -> Option<&mut DomainType> {
+    modules
+        .values_mut()
+        .find_map(|module| module.domain_types.get_mut(&id))
 }
 
 pub(super) fn find_function(
@@ -578,7 +669,7 @@ pub(super) fn find_expression(
 pub(super) fn derive_expression_type(
     modules: &HashMap<ModuleId, Module>,
     id: ExpressionId,
-) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+) -> Option<Result<ValueType, ExpressionTypeError>> {
     let (function, block) = modules
         .values()
         .flat_map(|module| module.functions.values())
@@ -605,9 +696,9 @@ fn derive_expression_type_in_block(
     function: &Function,
     block: &Block,
     id: ExpressionId,
-    memo: &mut HashMap<ExpressionId, Result<IntrinsicType, ExpressionTypeError>>,
+    memo: &mut HashMap<ExpressionId, Result<ValueType, ExpressionTypeError>>,
     visiting: &mut HashSet<ExpressionId>,
-) -> Result<IntrinsicType, ExpressionTypeError> {
+) -> Result<ValueType, ExpressionTypeError> {
     if let Some(result) = memo.get(&id) {
         return copy_expression_type_result(result);
     }
@@ -617,23 +708,57 @@ fn derive_expression_type_in_block(
 
     let result = match block.expression(id).map(Expression::kind) {
         None => Err(ExpressionTypeError::OperandTypeUnavailable { expression_id: id }),
-        Some(ExpressionKind::Int32Literal(_)) => Ok(IntrinsicType::Int32),
-        Some(ExpressionKind::Int64Literal(_)) => Ok(IntrinsicType::Int64),
-        Some(ExpressionKind::BoolLiteral(_)) => Ok(IntrinsicType::Bool),
-        Some(ExpressionKind::UnitLiteral) => Ok(IntrinsicType::Unit),
+        Some(ExpressionKind::Int32Literal(_)) => Ok(IntrinsicType::Int32.into()),
+        Some(ExpressionKind::Int64Literal(_)) => Ok(IntrinsicType::Int64.into()),
+        Some(ExpressionKind::BoolLiteral(_)) => Ok(IntrinsicType::Bool.into()),
+        Some(ExpressionKind::UnitLiteral) => Ok(IntrinsicType::Unit.into()),
+        Some(ExpressionKind::TextLiteral(_)) => Ok(IntrinsicType::Text.into()),
+        Some(ExpressionKind::BytesLiteral(_)) => Ok(IntrinsicType::Bytes.into()),
         Some(ExpressionKind::ParameterReference(parameter_id)) => function
             .parameter(*parameter_id)
-            .map(|parameter| parameter.intrinsic_type.copied())
+            .map(|parameter| parameter.value_type)
             .ok_or(ExpressionTypeError::UnresolvedParameter {
                 expression_id: id,
                 parameter_id: *parameter_id,
-            }),
+            })
+            .and_then(|value_type| ensure_resolved_value_type(modules, id, value_type)),
         Some(ExpressionKind::Call { target, .. }) => find_function(modules, *target)
-            .map(|target_function| target_function.return_type.copied())
+            .map(|target_function| target_function.return_type)
             .ok_or(ExpressionTypeError::UnresolvedFunction {
                 expression_id: id,
                 function_id: *target,
-            }),
+            })
+            .and_then(|value_type| ensure_resolved_value_type(modules, id, value_type)),
+        Some(ExpressionKind::DomainConstruct { type_id, .. }) => {
+            find_domain_type(modules, *type_id)
+                .map(|_| ValueType::Domain(*type_id))
+                .ok_or(ExpressionTypeError::UnresolvedDomainType {
+                    expression_id: id,
+                    type_id: *type_id,
+                })
+        }
+        Some(ExpressionKind::DomainProject { value }) => {
+            match derive_expression_type_in_block(modules, function, block, *value, memo, visiting)
+            {
+                Ok(ValueType::Domain(type_id)) => find_domain_type(modules, type_id)
+                    .map(|domain_type| ValueType::Intrinsic(domain_type.representation))
+                    .ok_or(ExpressionTypeError::UnresolvedDomainType {
+                        expression_id: id,
+                        type_id,
+                    }),
+                Ok(actual_type @ ValueType::Intrinsic(_)) => {
+                    Err(ExpressionTypeError::DomainProjectSourceNotDomain {
+                        expression_id: id,
+                        source_expression_id: *value,
+                        actual_type,
+                    })
+                }
+                Err(_) => Err(ExpressionTypeError::DomainProjectSourceTypeUnavailable {
+                    expression_id: id,
+                    source_expression_id: *value,
+                }),
+            }
+        }
         Some(
             ExpressionKind::Add { left, right }
             | ExpressionKind::Subtract { left, right }
@@ -675,9 +800,9 @@ fn derive_expression_type_in_block(
 
 fn derive_arithmetic_type(
     expression_id: ExpressionId,
-    left: Result<IntrinsicType, ExpressionTypeError>,
-    right: Result<IntrinsicType, ExpressionTypeError>,
-) -> Result<IntrinsicType, ExpressionTypeError> {
+    left: Result<ValueType, ExpressionTypeError>,
+    right: Result<ValueType, ExpressionTypeError>,
+) -> Result<ValueType, ExpressionTypeError> {
     // The outcome order is semantic and is independent of which operand was
     // inspected first (`MNIR-ARITH-090` through `MNIR-ARITH-095`).
     let (Ok(left), Ok(right)) = (left, right) else {
@@ -685,24 +810,28 @@ fn derive_arithmetic_type(
     };
 
     if left != right {
-        return Err(ExpressionTypeError::OperandTypeMismatch { expression_id });
+        return Err(ExpressionTypeError::OperandTypeMismatch {
+            expression_id,
+            left_type: left,
+            right_type: right,
+        });
     }
 
     match left {
-        IntrinsicType::Int32 => Ok(IntrinsicType::Int32),
-        IntrinsicType::Int64 => Ok(IntrinsicType::Int64),
-        IntrinsicType::Bool | IntrinsicType::Unit => {
-            Err(ExpressionTypeError::UnsupportedOperandType { expression_id })
-        }
+        ValueType::Intrinsic(IntrinsicType::Int32 | IntrinsicType::Int64) => Ok(left),
+        operand_type => Err(ExpressionTypeError::UnsupportedOperandType {
+            expression_id,
+            operand_type,
+        }),
     }
 }
 
 fn derive_comparison_type(
     expression_id: ExpressionId,
-    left: Result<IntrinsicType, ExpressionTypeError>,
-    right: Result<IntrinsicType, ExpressionTypeError>,
+    left: Result<ValueType, ExpressionTypeError>,
+    right: Result<ValueType, ExpressionTypeError>,
     ordering: bool,
-) -> Result<IntrinsicType, ExpressionTypeError> {
+) -> Result<ValueType, ExpressionTypeError> {
     // Comparison outcomes use the same deterministic precedence as arithmetic,
     // but every supported comparison derives Bool (`MNIR-CMP-034` through
     // `MNIR-CMP-041`).
@@ -711,22 +840,49 @@ fn derive_comparison_type(
     };
 
     if left != right {
-        return Err(ExpressionTypeError::OperandTypeMismatch { expression_id });
+        return Err(ExpressionTypeError::OperandTypeMismatch {
+            expression_id,
+            left_type: left,
+            right_type: right,
+        });
     }
 
-    if ordering && matches!(left, IntrinsicType::Bool | IntrinsicType::Unit) {
-        return Err(ExpressionTypeError::UnsupportedOperandType { expression_id });
+    let supported = match left {
+        ValueType::Intrinsic(IntrinsicType::Int32 | IntrinsicType::Int64) => true,
+        ValueType::Intrinsic(
+            IntrinsicType::Bool | IntrinsicType::Unit | IntrinsicType::Text | IntrinsicType::Bytes,
+        ) => !ordering,
+        ValueType::Domain(_) => false,
+    };
+    if !supported {
+        return Err(ExpressionTypeError::UnsupportedOperandType {
+            expression_id,
+            operand_type: left,
+        });
     }
 
-    Ok(IntrinsicType::Bool)
+    Ok(IntrinsicType::Bool.into())
 }
 
 fn copy_expression_type_result(
-    result: &Result<IntrinsicType, ExpressionTypeError>,
-) -> Result<IntrinsicType, ExpressionTypeError> {
-    match result {
-        Ok(intrinsic_type) => Ok(intrinsic_type.copied()),
-        Err(error) => Err(*error),
+    result: &Result<ValueType, ExpressionTypeError>,
+) -> Result<ValueType, ExpressionTypeError> {
+    *result
+}
+
+fn ensure_resolved_value_type(
+    modules: &HashMap<ModuleId, Module>,
+    expression_id: ExpressionId,
+    value_type: ValueType,
+) -> Result<ValueType, ExpressionTypeError> {
+    match value_type {
+        ValueType::Domain(type_id) if find_domain_type(modules, type_id).is_none() => {
+            Err(ExpressionTypeError::UnresolvedDomainType {
+                expression_id,
+                type_id,
+            })
+        }
+        _ => Ok(value_type),
     }
 }
 
@@ -773,6 +929,9 @@ fn collect_present_namespaces(
     let mut namespaces = HashSet::from([active_namespace.0]);
     for module in modules.values() {
         namespaces.insert(module.id.namespace_id().0);
+        for domain_type in module.domain_types.values() {
+            namespaces.insert(domain_type.id.namespace_id().0);
+        }
         for function in module.functions.values() {
             namespaces.insert(function.id.namespace_id().0);
             for parameter in &function.parameters {
@@ -979,8 +1138,9 @@ mod persistent_identity_tests {
         assert_eq!(source.module(module), source_snapshot.module(module));
     }
 
-    // AR-PSI-044; MNIR-PSI-104. The generator is used only for the Program
-    // and namespace; all entity categories use the lineage counter authority.
+    // AR-PSI-044, AR-DOMAIN-007; MNIR-PSI-104 and MNIR-DOMAIN-113. The
+    // generator is used only for the Program and namespace; all six entity
+    // categories use the lineage counter authority.
     #[test]
     fn existing_lineage_entity_allocation_does_not_generate_fresh_entropy() {
         let generation_count = Cell::new(0_u8);
@@ -998,6 +1158,9 @@ mod persistent_identity_tests {
 
         let mut transaction = program.begin_transaction();
         let module = transaction.add_module().unwrap();
+        let domain_type = transaction
+            .add_domain_type(module, IntrinsicType::Int64)
+            .unwrap();
         let function = transaction
             .add_function(module, IntrinsicType::Unit)
             .unwrap();
@@ -1010,6 +1173,7 @@ mod persistent_identity_tests {
 
         let allocated = [
             (module.namespace_id(), module.counter()),
+            (domain_type.namespace_id(), domain_type.counter()),
             (function.namespace_id(), function.counter()),
             (parameter.namespace_id(), parameter.counter()),
             (block.namespace_id(), block.counter()),
@@ -1018,7 +1182,7 @@ mod persistent_identity_tests {
         for (identity_namespace, _) in allocated {
             assert_eq!(identity_namespace, namespace);
         }
-        assert_eq!(allocated.map(|(_, counter)| counter), [1, 2, 3, 4, 5]);
+        assert_eq!(allocated.map(|(_, counter)| counter), [1, 2, 3, 4, 5, 6]);
         assert_eq!(generation_count.get(), 2);
         transaction.commit().unwrap();
         assert_eq!(generation_count.get(), 2);

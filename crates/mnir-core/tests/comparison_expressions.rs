@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use mnir_core::{
     BlockId, ExpressionId, ExpressionKind, ExpressionTypeError, FunctionId, IntrinsicType,
-    MnirProgram, ModuleId, MutationError, ParameterId, TransactionState,
+    MnirProgram, ModuleId, MutationError, ParameterId, TransactionState, ValueType,
 };
 
 fn add_module_and_function(
@@ -82,7 +82,7 @@ fn comparison_kinds_preserve_operands_and_derive_bool_for_supported_types() {
     assert!(transaction.is_expression_id_provisional(greater));
     assert_eq!(
         transaction.expression_type(nested),
-        Some(Ok(IntrinsicType::Bool))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Bool)))
     );
     transaction.set_return(block_id, greater).unwrap();
     transaction.commit().unwrap();
@@ -163,7 +163,10 @@ fn comparison_kinds_preserve_operands_and_derive_bool_for_supported_types() {
         identical,
         nested,
     ] {
-        assert_eq!(program.expression_type(id), Some(Ok(IntrinsicType::Bool)));
+        assert_eq!(
+            program.expression_type(id),
+            Some(Ok(ValueType::Intrinsic(IntrinsicType::Bool)))
+        );
     }
     assert_eq!(
         program.block(block_id).unwrap().return_expression_id(),
@@ -221,6 +224,19 @@ fn invalid_comparisons_commit_with_deterministic_typed_outcomes() {
             program.expression_type(expression_id),
             Some(Err(ExpressionTypeError::OperandTypeMismatch {
                 expression_id,
+                left_type: if expression_id == equality_forward || expression_id == ordering_forward
+                {
+                    ValueType::Intrinsic(IntrinsicType::Int32)
+                } else {
+                    ValueType::Intrinsic(IntrinsicType::Int64)
+                },
+                right_type: if expression_id == equality_forward
+                    || expression_id == ordering_forward
+                {
+                    ValueType::Intrinsic(IntrinsicType::Int64)
+                } else {
+                    ValueType::Intrinsic(IntrinsicType::Int32)
+                },
             }))
         );
     }
@@ -229,6 +245,11 @@ fn invalid_comparisons_commit_with_deterministic_typed_outcomes() {
             program.expression_type(expression_id),
             Some(Err(ExpressionTypeError::UnsupportedOperandType {
                 expression_id,
+                operand_type: if expression_id == bool_ordering {
+                    ValueType::Intrinsic(IntrinsicType::Bool)
+                } else {
+                    ValueType::Intrinsic(IntrinsicType::Unit)
+                },
             }))
         );
     }
@@ -437,7 +458,7 @@ fn comparison_identity_snapshot_fork_and_removal_semantics_are_preserved() {
     );
     assert_eq!(
         fork.expression_type(comparison),
-        Some(Ok(IntrinsicType::Bool))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Bool)))
     );
 
     let mut transaction = program.begin_transaction();

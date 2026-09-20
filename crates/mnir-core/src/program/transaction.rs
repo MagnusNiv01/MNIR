@@ -3,18 +3,19 @@ use std::fmt;
 use std::mem;
 use std::sync::Arc;
 
-use crate::IntrinsicType;
 use crate::ids::{
     AllocationCounterState, AllocationNamespaceId, BlockId, ExpressionId, FunctionId,
-    IdentifierCategory, ModuleId, ParameterId, RevisionId,
+    IdentifierCategory, ModuleId, ParameterId, RevisionId, TypeId,
 };
+use crate::{IntrinsicType, ValueType};
 
 use super::body::{Block, Expression, ExpressionKind, FunctionBody, Terminator};
 use super::error::{ExpressionTypeError, MutationError, TransactionState};
 use super::model::{
-    Function, MnirProgram, Module, Parameter, ProgramSnapshot, RevisionState,
-    derive_expression_type, find_block, find_block_mut, find_block_owner, find_expression,
-    find_function, find_function_mut, find_parameter, find_parameter_mut,
+    DomainType, Function, MnirProgram, Module, Parameter, ProgramSnapshot, RevisionState,
+    derive_expression_type, find_block, find_block_mut, find_block_owner, find_domain_type,
+    find_domain_type_mut, find_expression, find_function, find_function_mut, find_parameter,
+    find_parameter_mut,
 };
 use super::validation::validate_modules;
 
@@ -25,6 +26,7 @@ impl MnirProgram {
             source_revision_id: self.head.revision_id,
             working_modules: self.head.copied_modules(),
             provisional_module_ids: HashSet::new(),
+            provisional_type_ids: HashSet::new(),
             provisional_function_ids: HashSet::new(),
             provisional_parameter_ids: HashSet::new(),
             provisional_block_ids: HashSet::new(),
@@ -41,6 +43,7 @@ pub struct MutationTransaction<'program> {
     source_revision_id: RevisionId,
     working_modules: HashMap<ModuleId, Module>,
     provisional_module_ids: HashSet<ModuleId>,
+    provisional_type_ids: HashSet<TypeId>,
     provisional_function_ids: HashSet<FunctionId>,
     provisional_parameter_ids: HashSet<ParameterId>,
     provisional_block_ids: HashSet<BlockId>,
@@ -104,6 +107,11 @@ impl MutationTransaction<'_> {
     }
 
     #[must_use]
+    pub fn domain_type(&self, id: TypeId) -> Option<&DomainType> {
+        find_domain_type(&self.working_modules, id)
+    }
+
+    #[must_use]
     pub fn parameter(&self, id: ParameterId) -> Option<&Parameter> {
         find_parameter(&self.working_modules, id)
     }
@@ -127,7 +135,7 @@ impl MutationTransaction<'_> {
     pub fn expression_type(
         &self,
         id: ExpressionId,
-    ) -> Option<Result<IntrinsicType, ExpressionTypeError>> {
+    ) -> Option<Result<ValueType, ExpressionTypeError>> {
         derive_expression_type(&self.working_modules, id)
     }
 
@@ -139,6 +147,11 @@ impl MutationTransaction<'_> {
     #[must_use]
     pub fn is_function_id_provisional(&self, id: FunctionId) -> bool {
         self.state == TransactionState::Active && self.provisional_function_ids.contains(&id)
+    }
+
+    #[must_use]
+    pub fn is_type_id_provisional(&self, id: TypeId) -> bool {
+        self.state == TransactionState::Active && self.provisional_type_ids.contains(&id)
     }
 
     #[must_use]
@@ -220,17 +233,95 @@ impl MutationTransaction<'_> {
         Ok(())
     }
 
+    /// Adds one nominal Domain Type to an existing Module.
+    pub fn add_domain_type(
+        &mut self,
+        module_id: ModuleId,
+        representation: IntrinsicType,
+    ) -> Result<TypeId, MutationError> {
+        self.require_active()?;
+        if !self.working_modules.contains_key(&module_id) {
+            return Err(self.fail(MutationError::UnknownModule(module_id)));
+        }
+
+        let id = match self.allocate_type_id() {
+            Ok(id) => id,
+            Err(error) => return Err(self.fail(error)),
+        };
+        self.working_modules
+            .get_mut(&module_id)
+            .expect("validated Module")
+            .domain_types
+            .insert(id, DomainType::new(id, representation));
+        self.provisional_type_ids.insert(id);
+        Ok(id)
+    }
+
+    pub fn set_domain_type_representation(
+        &mut self,
+        id: TypeId,
+        representation: IntrinsicType,
+    ) -> Result<(), MutationError> {
+        self.require_active()?;
+        let Some(domain_type) = find_domain_type_mut(&mut self.working_modules, id) else {
+            return Err(self.fail(MutationError::UnknownType(id)));
+        };
+        domain_type.representation = representation;
+        Ok(())
+    }
+
+    pub fn set_domain_type_preferred_name(
+        &mut self,
+        id: TypeId,
+        preferred_name: Option<String>,
+    ) -> Result<(), MutationError> {
+        self.require_active()?;
+        let Some(domain_type) = find_domain_type_mut(&mut self.working_modules, id) else {
+            return Err(self.fail(MutationError::UnknownType(id)));
+        };
+        domain_type.presentation.set_preferred_name(preferred_name);
+        Ok(())
+    }
+
+    pub fn set_domain_type_documentation(
+        &mut self,
+        id: TypeId,
+        documentation: Option<String>,
+    ) -> Result<(), MutationError> {
+        self.require_active()?;
+        let Some(domain_type) = find_domain_type_mut(&mut self.working_modules, id) else {
+            return Err(self.fail(MutationError::UnknownType(id)));
+        };
+        domain_type.presentation.set_documentation(documentation);
+        Ok(())
+    }
+
+    /// Removes only the declaration; surviving references are repairable
+    /// temporary structural invalidity (`MNIR-DOMAIN-073`).
+    pub fn remove_domain_type(&mut self, id: TypeId) -> Result<(), MutationError> {
+        self.require_active()?;
+        for module in self.working_modules.values_mut() {
+            if module.domain_types.remove(&id).is_some() {
+                return Ok(());
+            }
+        }
+        Err(self.fail(MutationError::UnknownType(id)))
+    }
+
     /// Adds a signature-only Function to a Module (`MNIR-FUNC-001`).
     pub fn add_function(
         &mut self,
         module_id: ModuleId,
-        return_type: IntrinsicType,
+        return_type: impl Into<ValueType>,
     ) -> Result<FunctionId, MutationError> {
         self.require_active()?;
+
+        let return_type = return_type.into();
 
         if !self.working_modules.contains_key(&module_id) {
             return Err(self.fail(MutationError::UnknownModule(module_id)));
         }
+        self.require_resolved_value_type(return_type)?;
 
         let id = match self.allocate_function_id() {
             Ok(id) => id,
@@ -285,9 +376,14 @@ impl MutationTransaction<'_> {
     pub fn set_function_return_type(
         &mut self,
         id: FunctionId,
-        return_type: IntrinsicType,
+        return_type: impl Into<ValueType>,
     ) -> Result<(), MutationError> {
         self.require_active()?;
+        let return_type = return_type.into();
+        if find_function(&self.working_modules, id).is_none() {
+            return Err(self.fail(MutationError::UnknownFunction(id)));
+        }
+        self.require_resolved_value_type(return_type)?;
         let Some(function) = find_function_mut(&mut self.working_modules, id) else {
             return Err(self.fail(MutationError::UnknownFunction(id)));
         };
@@ -298,13 +394,16 @@ impl MutationTransaction<'_> {
     pub fn add_parameter(
         &mut self,
         function_id: FunctionId,
-        intrinsic_type: IntrinsicType,
+        value_type: impl Into<ValueType>,
     ) -> Result<ParameterId, MutationError> {
         self.require_active()?;
+
+        let value_type = value_type.into();
 
         if find_function(&self.working_modules, function_id).is_none() {
             return Err(self.fail(MutationError::UnknownFunction(function_id)));
         }
+        self.require_resolved_value_type(value_type)?;
 
         let id = match self.allocate_parameter_id() {
             Ok(id) => id,
@@ -313,7 +412,7 @@ impl MutationTransaction<'_> {
         let Some(function) = find_function_mut(&mut self.working_modules, function_id) else {
             return Err(self.fail(MutationError::UnknownFunction(function_id)));
         };
-        function.parameters.push(Parameter::new(id, intrinsic_type));
+        function.parameters.push(Parameter::new(id, value_type));
         self.provisional_parameter_ids.insert(id);
         Ok(id)
     }
@@ -368,13 +467,18 @@ impl MutationTransaction<'_> {
     pub fn set_parameter_type(
         &mut self,
         id: ParameterId,
-        intrinsic_type: IntrinsicType,
+        value_type: impl Into<ValueType>,
     ) -> Result<(), MutationError> {
         self.require_active()?;
+        let value_type = value_type.into();
+        if find_parameter(&self.working_modules, id).is_none() {
+            return Err(self.fail(MutationError::UnknownParameter(id)));
+        }
+        self.require_resolved_value_type(value_type)?;
         let Some(parameter) = find_parameter_mut(&mut self.working_modules, id) else {
             return Err(self.fail(MutationError::UnknownParameter(id)));
         };
-        parameter.intrinsic_type = intrinsic_type;
+        parameter.value_type = value_type;
         Ok(())
     }
 
@@ -495,6 +599,72 @@ impl MutationTransaction<'_> {
 
     pub fn add_unit_literal(&mut self, block_id: BlockId) -> Result<ExpressionId, MutationError> {
         self.add_expression(block_id, ExpressionKind::UnitLiteral)
+    }
+
+    pub fn add_text_literal(
+        &mut self,
+        block_id: BlockId,
+        value: impl Into<String>,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_expression(block_id, ExpressionKind::TextLiteral(value.into()))
+    }
+
+    pub fn add_bytes_literal(
+        &mut self,
+        block_id: BlockId,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<ExpressionId, MutationError> {
+        self.add_expression(block_id, ExpressionKind::BytesLiteral(value.into()))
+    }
+
+    pub fn add_domain_construct(
+        &mut self,
+        block_id: BlockId,
+        type_id: TypeId,
+        value: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.require_active()?;
+        let Some(block) = find_block(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        if find_domain_type(&self.working_modules, type_id).is_none() {
+            return Err(self.fail(MutationError::UnknownType(type_id)));
+        }
+        if block.expression(value).is_none() {
+            let error = if find_expression(&self.working_modules, value).is_some() {
+                MutationError::ExpressionNotOwnedByBlock {
+                    expression_id: value,
+                    block_id,
+                }
+            } else {
+                MutationError::UnknownExpression(value)
+            };
+            return Err(self.fail(error));
+        }
+        self.add_expression(block_id, ExpressionKind::DomainConstruct { type_id, value })
+    }
+
+    pub fn add_domain_project(
+        &mut self,
+        block_id: BlockId,
+        value: ExpressionId,
+    ) -> Result<ExpressionId, MutationError> {
+        self.require_active()?;
+        let Some(block) = find_block(&self.working_modules, block_id) else {
+            return Err(self.fail(MutationError::UnknownBlock(block_id)));
+        };
+        if block.expression(value).is_none() {
+            let error = if find_expression(&self.working_modules, value).is_some() {
+                MutationError::ExpressionNotOwnedByBlock {
+                    expression_id: value,
+                    block_id,
+                }
+            } else {
+                MutationError::UnknownExpression(value)
+            };
+            return Err(self.fail(error));
+        }
+        self.add_expression(block_id, ExpressionKind::DomainProject { value })
     }
 
     pub fn add_parameter_reference(
@@ -868,6 +1038,15 @@ impl MutationTransaction<'_> {
         error
     }
 
+    fn require_resolved_value_type(&mut self, value_type: ValueType) -> Result<(), MutationError> {
+        if let ValueType::Domain(type_id) = value_type
+            && find_domain_type(&self.working_modules, type_id).is_none()
+        {
+            return Err(self.fail(MutationError::UnknownType(type_id)));
+        }
+        Ok(())
+    }
+
     fn add_expression(
         &mut self,
         block_id: BlockId,
@@ -972,6 +1151,14 @@ impl MutationTransaction<'_> {
         Ok(FunctionId::new(namespace_id, counter))
     }
 
+    fn allocate_type_id(&mut self) -> Result<TypeId, MutationError> {
+        let (namespace_id, counter) = self
+            .lineage
+            .allocation_authority
+            .reserve(IdentifierCategory::Type)?;
+        Ok(TypeId::new(namespace_id, counter))
+    }
+
     fn allocate_parameter_id(&mut self) -> Result<ParameterId, MutationError> {
         let (namespace_id, counter) = self
             .lineage
@@ -1010,7 +1197,7 @@ fn allocate_from_cursor(
 mod persistent_identity_tests {
     use crate::{
         AllocationCounterState, IdentifierCategory, IntrinsicType, MnirProgram, ModuleId,
-        MutationError, StructuralError, TransactionState,
+        MutationError, StructuralError, TransactionState, ValueType,
     };
 
     // AR-PSI-009 and AR-PSI-039; MNIR-PSI-032/-034/-042.
@@ -1213,5 +1400,155 @@ mod persistent_identity_tests {
         let mut next = program.begin_transaction();
         let later = next.add_module().unwrap();
         assert!(later.counter() > consumed_counter);
+    }
+
+    // AR-DOMAIN-057; TypeId issuance at MAX is independently evidenced from
+    // allocation attempts that begin in Exhausted.
+    #[test]
+    fn last_type_counter_direct_discard_preserves_exhaustion_and_non_reuse() {
+        let mut program = MnirProgram::new().unwrap();
+        let mut setup = program.begin_transaction();
+        let module = setup.add_module().unwrap();
+        setup.commit().unwrap();
+        let namespace = program.allocation_namespace_id();
+        program
+            .allocation_authority
+            .set_counter_state_for_test(AllocationCounterState::Available(u64::MAX));
+
+        let mut transaction = program.begin_transaction();
+        let last = transaction
+            .add_domain_type(module, IntrinsicType::Text)
+            .unwrap();
+        assert_eq!(last.namespace_id(), namespace);
+        assert_eq!(last.counter(), u64::MAX);
+        assert_eq!(
+            transaction.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+        transaction.discard().unwrap();
+        drop(transaction);
+
+        assert_eq!(
+            program.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+        assert!(program.domain_type(last).is_none());
+        let mut later = program.begin_transaction();
+        assert_eq!(
+            later.add_domain_type(module, IntrinsicType::Bytes),
+            Err(MutationError::IdentifierExhausted(IdentifierCategory::Type))
+        );
+        assert_eq!(later.allocation_namespace_id(), namespace);
+    }
+
+    // AR-DOMAIN-058; an already exhausted authority fails before TypeId
+    // issuance, poisons the transaction, and never rotates its namespace.
+    #[test]
+    fn type_allocation_from_exhausted_fails_before_issuance() {
+        let mut program = MnirProgram::new().unwrap();
+        let mut setup = program.begin_transaction();
+        let module = setup.add_module().unwrap();
+        setup.commit().unwrap();
+        let namespace = program.allocation_namespace_id();
+        program
+            .allocation_authority
+            .set_counter_state_for_test(AllocationCounterState::Exhausted);
+
+        let mut transaction = program.begin_transaction();
+        assert_eq!(
+            transaction.add_domain_type(module, IntrinsicType::Int64),
+            Err(MutationError::IdentifierExhausted(IdentifierCategory::Type))
+        );
+        assert_eq!(transaction.state(), TransactionState::Failed);
+        assert_eq!(transaction.allocation_namespace_id(), namespace);
+        assert_eq!(
+            transaction.allocation_counter_state(),
+            AllocationCounterState::Exhausted
+        );
+    }
+
+    // AR-DOMAIN-012/-013/-059; allocator metadata advances independently of
+    // immutable semantic revisions and TypeIds are never reusable after
+    // discard, operation poison, or a structurally rejected commit.
+    #[test]
+    fn type_reservations_advance_allocator_only_and_are_never_reused() {
+        let mut program = MnirProgram::new().unwrap();
+        let mut setup = program.begin_transaction();
+        let module = setup.add_module().unwrap();
+        setup.commit().unwrap();
+        let program_id = program.program_id();
+        let revision = program.revision_id();
+        let namespace = program.allocation_namespace_id();
+        program
+            .allocation_authority
+            .set_counter_state_for_test(AllocationCounterState::Available(100));
+        let s1 = program.snapshot();
+
+        let mut discarded = program.begin_transaction();
+        let first = discarded
+            .add_domain_type(module, IntrinsicType::Int64)
+            .unwrap();
+        discarded.discard().unwrap();
+        drop(discarded);
+        let s2 = program.snapshot();
+        assert_eq!(first.counter(), 100);
+        assert_eq!(s1.program_id(), program_id);
+        assert_eq!(s2.program_id(), program_id);
+        assert_eq!(s1.revision_id(), revision);
+        assert_eq!(s2.revision_id(), revision);
+        assert_eq!(s1.allocation_namespace_id(), namespace);
+        assert_eq!(s2.allocation_namespace_id(), namespace);
+        assert_eq!(
+            s1.allocation_counter_state(),
+            AllocationCounterState::Available(100)
+        );
+        assert_eq!(
+            s2.allocation_counter_state(),
+            AllocationCounterState::Available(101)
+        );
+        assert_eq!(s1.module(module).unwrap().domain_type_count(), 0);
+        assert_eq!(s2.module(module).unwrap().domain_type_count(), 0);
+
+        let mut poisoned = program.begin_transaction();
+        let second = poisoned
+            .add_domain_type(module, IntrinsicType::Bool)
+            .unwrap();
+        assert_eq!(
+            poisoned.remove_domain_type(first),
+            Err(MutationError::UnknownType(first))
+        );
+        poisoned.discard().unwrap();
+        drop(poisoned);
+
+        let mut rejected = program.begin_transaction();
+        let third = rejected
+            .add_domain_type(module, IntrinsicType::Bytes)
+            .unwrap();
+        let function = rejected
+            .add_function(module, ValueType::Domain(third))
+            .unwrap();
+        let block = rejected.create_function_body(function).unwrap();
+        rejected.remove_domain_type(third).unwrap();
+        assert!(matches!(
+            rejected.commit(),
+            Err(MutationError::StructuralViolation(
+                StructuralError::DanglingValueType(actual)
+            )) if actual == third
+        ));
+        rejected.discard().unwrap();
+        drop(rejected);
+
+        assert_eq!(program.revision_id(), revision);
+        let mut later = program.begin_transaction();
+        let fourth = later.add_domain_type(module, IntrinsicType::Text).unwrap();
+        assert!(first.counter() < second.counter());
+        assert!(second.counter() < third.counter());
+        assert!(third.counter() < block.counter());
+        assert!(block.counter() < fourth.counter());
+        assert_eq!(fourth.namespace_id(), namespace);
+        assert_eq!(
+            s1.allocation_counter_state(),
+            AllocationCounterState::Available(100)
+        );
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ids::{BlockId, ExpressionId, FunctionId, ParameterId};
+use crate::ids::{BlockId, ExpressionId, FunctionId, ParameterId, TypeId};
 
 /// The closed set of Block terminators defined by Conditional Control Flow 0.1.
 ///
@@ -30,7 +30,16 @@ pub enum ExpressionKind {
     Int64Literal(i64),
     BoolLiteral(bool),
     UnitLiteral,
+    TextLiteral(String),
+    BytesLiteral(Vec<u8>),
     ParameterReference(ParameterId),
+    DomainConstruct {
+        type_id: TypeId,
+        value: ExpressionId,
+    },
+    DomainProject {
+        value: ExpressionId,
+    },
     Add {
         left: ExpressionId,
         right: ExpressionId,
@@ -99,7 +108,11 @@ impl ExpressionKind {
             | Self::Int64Literal(_)
             | Self::BoolLiteral(_)
             | Self::UnitLiteral
+            | Self::TextLiteral(_)
+            | Self::BytesLiteral(_)
             | Self::ParameterReference(_)
+            | Self::DomainConstruct { .. }
+            | Self::DomainProject { .. }
             | Self::Call { .. } => None,
         }
     }
@@ -116,7 +129,11 @@ impl ExpressionKind {
             | Self::Int64Literal(_)
             | Self::BoolLiteral(_)
             | Self::UnitLiteral
+            | Self::TextLiteral(_)
+            | Self::BytesLiteral(_)
             | Self::ParameterReference(_)
+            | Self::DomainConstruct { .. }
+            | Self::DomainProject { .. }
             | Self::Add { .. }
             | Self::Subtract { .. }
             | Self::Multiply { .. }
@@ -133,6 +150,8 @@ impl ExpressionKind {
             vec![left, right]
         } else if let Self::Call { arguments, .. } = self {
             arguments.clone()
+        } else if let Self::DomainConstruct { value, .. } | Self::DomainProject { value } = self {
+            vec![*value]
         } else {
             Vec::new()
         }

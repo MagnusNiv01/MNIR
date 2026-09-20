@@ -5,6 +5,7 @@ pub enum IdentifierCategory {
     Revision,
     AllocationNamespace,
     Module,
+    Type,
     Function,
     Parameter,
     Block,
@@ -107,6 +108,20 @@ persistent_entity_id!(
 );
 
 persistent_entity_id!(
+    /// Persistent typed identity of one Module-owned Domain Type.
+    ///
+    /// ```compile_fail
+    /// use mnir_core::{ModuleId, TypeId};
+    ///
+    /// fn require_module(_: ModuleId) {}
+    /// fn demonstrate(type_id: TypeId) {
+    ///     require_module(type_id);
+    /// }
+    /// ```
+    TypeId
+);
+
+persistent_entity_id!(
     /// Persistent typed identity of one Parameter.
     ParameterId
 );
@@ -129,3 +144,60 @@ persistent_entity_id!(
     /// Persistent typed identity of one Expression.
     ExpressionId
 );
+
+#[cfg(test)]
+mod domain_identity_tests {
+    use std::any::TypeId as RustTypeId;
+
+    use super::{
+        AllocationNamespaceId, BlockId, ExpressionId, FunctionId, ModuleId, ParameterId, TypeId,
+    };
+
+    // AR-DOMAIN-006: equal persistent components never collapse the six
+    // statically distinct entity-ID categories into one identity category.
+    #[test]
+    fn type_id_is_a_distinct_typed_category_with_equal_components() {
+        let namespace = AllocationNamespaceId([7; 16]);
+        let counter = 42;
+        let domain = TypeId::new(namespace, counter);
+        let components = [
+            (
+                ModuleId::new(namespace, counter).namespace_id(),
+                ModuleId::new(namespace, counter).counter(),
+            ),
+            (domain.namespace_id(), domain.counter()),
+            (
+                FunctionId::new(namespace, counter).namespace_id(),
+                FunctionId::new(namespace, counter).counter(),
+            ),
+            (
+                ParameterId::new(namespace, counter).namespace_id(),
+                ParameterId::new(namespace, counter).counter(),
+            ),
+            (
+                BlockId::new(namespace, counter).namespace_id(),
+                BlockId::new(namespace, counter).counter(),
+            ),
+            (
+                ExpressionId::new(namespace, counter).namespace_id(),
+                ExpressionId::new(namespace, counter).counter(),
+            ),
+        ];
+        assert!(
+            components
+                .iter()
+                .all(|component| *component == (namespace, counter))
+        );
+
+        let domain_category = RustTypeId::of::<TypeId>();
+        for category in [
+            RustTypeId::of::<ModuleId>(),
+            RustTypeId::of::<FunctionId>(),
+            RustTypeId::of::<ParameterId>(),
+            RustTypeId::of::<BlockId>(),
+            RustTypeId::of::<ExpressionId>(),
+        ] {
+            assert_ne!(domain_category, category);
+        }
+    }
+}

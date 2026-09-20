@@ -1,6 +1,6 @@
 /// An intrinsic type whose identity and semantics are defined by MNIR.
 ///
-/// Type System Foundations 0.1 defines exactly these four alternatives. The
+/// Domain Type Foundations 0.1 defines exactly these six alternatives. The
 /// enum has no Program-owned identifier or registration state, so equality is
 /// based only on the intrinsic alternative (`MNIR-TYPE-001` through
 /// `MNIR-TYPE-007`). Rust discriminants and debug formatting are not MNIR
@@ -14,7 +14,7 @@
 ///
 /// let _ = IntrinsicType::Unknown;
 /// ```
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IntrinsicType {
     /// The target-independent signed 32-bit intrinsic type.
     Int32,
@@ -24,15 +24,8 @@ pub enum IntrinsicType {
     Bool,
     /// The single-valued Unit intrinsic type.
     Unit,
-}
-
-impl IntrinsicType {
-    pub(crate) fn copied(&self) -> Self {
-        match self {
-            Self::Int32 => Self::Int32,
-            Self::Int64 => Self::Int64,
-            Self::Bool => Self::Bool,
-            Self::Unit => Self::Unit,
-        }
-    }
+    /// A finite sequence of Unicode scalar values.
+    Text,
+    /// A finite sequence of octets.
+    Bytes,
 }

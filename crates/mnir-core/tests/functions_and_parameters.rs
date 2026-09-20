@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use mnir_core::{
     FunctionId, IntrinsicType, MnirProgram, ModuleId, MutationError, ParameterId, ProgramId,
-    RevisionId, TransactionState,
+    RevisionId, TransactionState, ValueType,
 };
 
 fn add_committed_module(program: &mut MnirProgram) -> ModuleId {
@@ -59,14 +59,17 @@ fn functions_are_created_in_requested_modules_with_unique_identity() {
             .function(first)
             .unwrap()
             .return_type(),
-        &IntrinsicType::Int32
+        &ValueType::Intrinsic(IntrinsicType::Int32)
     );
     let zero_parameter = committed
         .module(second_module)
         .unwrap()
         .function(second)
         .unwrap();
-    assert_eq!(zero_parameter.return_type(), &IntrinsicType::Unit);
+    assert_eq!(
+        zero_parameter.return_type(),
+        &ValueType::Intrinsic(IntrinsicType::Unit)
+    );
     assert_eq!(zero_parameter.parameter_count(), 0);
 }
 
@@ -117,7 +120,10 @@ fn function_presentation_and_return_type_mutate_without_changing_identity() {
     assert_eq!(committed.program_id(), program_id);
     assert_ne!(committed.revision_id(), source_revision);
     assert_eq!(function.id(), function_id);
-    assert_eq!(function.return_type(), &IntrinsicType::Bool);
+    assert_eq!(
+        function.return_type(),
+        &ValueType::Intrinsic(IntrinsicType::Bool)
+    );
     assert_eq!(function.presentation().preferred_name(), Some("compute"));
     assert_eq!(function.presentation().documentation(), Some("A signature"));
 }
@@ -162,22 +168,25 @@ fn parameters_are_program_unique_and_ordered_per_function() {
         Some("a")
     );
     assert_eq!(
-        first.parameters()[0].intrinsic_type(),
-        &IntrinsicType::Int32
+        first.parameters()[0].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int32)
     );
     assert_eq!(first.parameters()[1].id(), first_b);
     assert_eq!(
         first.parameters()[1].presentation().preferred_name(),
         Some("b")
     );
-    assert_eq!(first.parameters()[1].intrinsic_type(), &IntrinsicType::Bool);
     assert_eq!(
-        second.parameters()[0].intrinsic_type(),
-        &IntrinsicType::Bool
+        first.parameters()[1].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Bool)
     );
     assert_eq!(
-        second.parameters()[1].intrinsic_type(),
-        &IntrinsicType::Int32
+        second.parameters()[0].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Bool)
+    );
+    assert_eq!(
+        second.parameters()[1].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int32)
     );
     assert_eq!(
         HashSet::from([first_a, first_b, second_a, second_b]).len(),
@@ -187,12 +196,12 @@ fn parameters_are_program_unique_and_ordered_per_function() {
         first
             .parameters()
             .iter()
-            .map(|parameter| parameter.intrinsic_type())
+            .map(|parameter| parameter.value_type())
             .collect::<Vec<_>>(),
         second
             .parameters()
             .iter()
-            .map(|parameter| parameter.intrinsic_type())
+            .map(|parameter| parameter.value_type())
             .collect::<Vec<_>>()
     );
 }
@@ -261,7 +270,10 @@ fn parameter_metadata_and_type_mutate_without_changing_identity() {
 
     let parameter = committed.parameter(parameter_id).unwrap();
     assert_eq!(parameter.id(), parameter_id);
-    assert_eq!(parameter.intrinsic_type(), &IntrinsicType::Int64);
+    assert_eq!(
+        parameter.value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int64)
+    );
     assert_eq!(parameter.presentation().preferred_name(), Some("value"));
     assert_eq!(parameter.presentation().documentation(), Some("input"));
 }
@@ -331,7 +343,10 @@ fn provisional_identities_support_sequential_operations() {
     let parameter = committed.parameter(parameter_id).unwrap();
     assert_eq!(parameter.id(), parameter_id);
     assert_eq!(parameter.presentation().preferred_name(), Some("p"));
-    assert_eq!(parameter.intrinsic_type(), &IntrinsicType::Bool);
+    assert_eq!(
+        parameter.value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Bool)
+    );
 }
 
 // MNIR-FUNC-041 as superseded by MNIR-PSI-032/-033: failed and discarded
@@ -522,11 +537,11 @@ fn snapshots_and_forks_preserve_contents_and_inherited_persistent_ids() {
     assert_ne!(fork.program_id(), program.program_id());
     assert_eq!(
         fork.function(function_id).unwrap().return_type(),
-        &IntrinsicType::Bool
+        &ValueType::Intrinsic(IntrinsicType::Bool)
     );
     assert_eq!(
-        fork.parameter(parameters[1]).unwrap().intrinsic_type(),
-        &IntrinsicType::Int64
+        fork.parameter(parameters[1]).unwrap().value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int64)
     );
 
     let mut transaction = fork.begin_transaction();
@@ -668,7 +683,10 @@ fn module_removal_preserves_unrelated_module_signature_state() {
         .function(function_id)
         .unwrap();
     assert_eq!(function.id(), function_id);
-    assert_eq!(function.return_type(), &IntrinsicType::Bool);
+    assert_eq!(
+        function.return_type(),
+        &ValueType::Intrinsic(IntrinsicType::Bool)
+    );
     assert_eq!(function.presentation().preferred_name(), Some("kept"));
     assert_eq!(
         function
@@ -679,12 +697,12 @@ fn module_removal_preserves_unrelated_module_signature_state() {
         parameters
     );
     assert_eq!(
-        function.parameters()[0].intrinsic_type(),
-        &IntrinsicType::Int32
+        function.parameters()[0].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int32)
     );
     assert_eq!(
-        function.parameters()[1].intrinsic_type(),
-        &IntrinsicType::Int64
+        function.parameters()[1].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int64)
     );
     assert_eq!(
         function.parameters()[0].presentation().documentation(),
@@ -843,17 +861,20 @@ fn removing_function_preserves_unrelated_function_signature_state() {
         .function(preserved)
         .unwrap();
     assert_eq!(function.id(), preserved);
-    assert_eq!(function.return_type(), &IntrinsicType::Bool);
+    assert_eq!(
+        function.return_type(),
+        &ValueType::Intrinsic(IntrinsicType::Bool)
+    );
     assert_eq!(function.presentation().documentation(), Some("preserved"));
     assert_eq!(function.parameters()[0].id(), parameters[0]);
     assert_eq!(function.parameters()[1].id(), parameters[1]);
     assert_eq!(
-        function.parameters()[0].intrinsic_type(),
-        &IntrinsicType::Int32
+        function.parameters()[0].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int32)
     );
     assert_eq!(
-        function.parameters()[1].intrinsic_type(),
-        &IntrinsicType::Int64
+        function.parameters()[1].value_type(),
+        &ValueType::Intrinsic(IntrinsicType::Int64)
     );
     assert_eq!(
         function.parameters()[0].presentation().preferred_name(),

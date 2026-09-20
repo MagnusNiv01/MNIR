@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use mnir_core::{
     BlockId, ExpressionId, ExpressionKind, ExpressionTypeError, FunctionId, IntrinsicType,
     MnirProgram, ModuleId, MutationError, ParameterId, ProgramId, RevisionId, StructuralError,
-    TransactionState,
+    TransactionState, ValueType,
 };
 
 fn add_module_and_function(
@@ -130,17 +130,26 @@ fn every_literal_preserves_data_has_derived_type_and_uses_range_safe_inputs() {
         &ExpressionKind::UnitLiteral
     );
     for id in [int32_min, int32_max] {
-        assert_eq!(program.expression_type(id), Some(Ok(IntrinsicType::Int32)));
+        assert_eq!(
+            program.expression_type(id),
+            Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
+        );
     }
     for id in [int64_min, int64_max] {
-        assert_eq!(program.expression_type(id), Some(Ok(IntrinsicType::Int64)));
+        assert_eq!(
+            program.expression_type(id),
+            Some(Ok(ValueType::Intrinsic(IntrinsicType::Int64)))
+        );
     }
     for id in [false_id, true_id] {
-        assert_eq!(program.expression_type(id), Some(Ok(IntrinsicType::Bool)));
+        assert_eq!(
+            program.expression_type(id),
+            Some(Ok(ValueType::Intrinsic(IntrinsicType::Bool)))
+        );
     }
     assert_eq!(
         program.expression_type(unit_id),
-        Some(Ok(IntrinsicType::Unit))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Unit)))
     );
 }
 
@@ -175,7 +184,7 @@ fn parameter_reference_requires_same_function_and_can_be_returned() {
     );
     assert_eq!(
         program.expression_type(reference),
-        Some(Ok(IntrinsicType::Int32))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
     );
     assert_eq!(
         program.block(block_id).unwrap().return_expression_id(),
@@ -297,11 +306,11 @@ fn structurally_valid_return_type_mismatch_is_representable() {
     transaction.commit().unwrap();
     assert_eq!(
         program.function(function_id).unwrap().return_type(),
-        &IntrinsicType::Bool
+        &ValueType::Intrinsic(IntrinsicType::Bool)
     );
     assert_eq!(
         program.expression_type(expression_id),
-        Some(Ok(IntrinsicType::Int32))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int32)))
     );
     assert!(program.validate_structure().is_ok());
 }
@@ -330,12 +339,12 @@ fn parameter_reference_type_is_derived_live_and_dangling_inspection_does_not_poi
         .unwrap();
     assert_eq!(
         transaction.expression_type(reference),
-        Some(Ok(IntrinsicType::Int64))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int64)))
     );
     transaction.commit().unwrap();
     assert_eq!(
         program.expression_type(reference),
-        Some(Ok(IntrinsicType::Int64))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Int64)))
     );
 
     let source_revision = program.revision_id();
@@ -504,7 +513,7 @@ fn snapshots_and_forks_preserve_body_identities_and_references() {
     );
     assert_eq!(
         fork.expression_type(expression_id),
-        Some(Ok(IntrinsicType::Bool))
+        Some(Ok(ValueType::Intrinsic(IntrinsicType::Bool)))
     );
     let mut transaction = fork.begin_transaction();
     transaction.remove_function_body(function_id).unwrap();
