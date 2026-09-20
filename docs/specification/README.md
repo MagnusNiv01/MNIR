@@ -19,5 +19,6 @@ If required behavior is absent, ambiguous, or contradictory, report a `SPECIFICA
 - [`08-conditional-control-flow.md`](08-conditional-control-flow.md) — Draft normative Conditional Control Flow 0.1 specification defining finite acyclic multi-Block Function bodies, Branch terminators, CFG validity, and Semantic Verification rule set version 0.3.
 - [`09-function-calls-and-sequencing-foundations.md`](09-function-calls-and-sequencing-foundations.md) — Draft normative Function Calls and Sequencing Foundations 0.1 specification defining direct Call Expressions, Block-local EffectSequence semantics, and Semantic Verification rule set version 0.4.
 - [`10-persistent-semantic-identity.md`](10-persistent-semantic-identity.md) — Draft normative Persistent Semantic Identity 0.1 specification defining namespaced typed entity IDs, allocation authority, persistent non-reuse, and identity-preserving normal forks.
+- [`11-domain-type-foundations.md`](11-domain-type-foundations.md) — Draft normative Domain Type Foundations 0.1 specification defining Text and Bytes, ValueType, persistent nominal TypeId identity, Domain construction/projection, and Semantic Verification rule set version 0.5.
 
 Later specification increments will define additional MNIR semantics.

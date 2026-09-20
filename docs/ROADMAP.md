@@ -90,8 +90,9 @@ normative [Persistent Semantic Identity 0.1 specification](specification/10-pers
 is implemented. Modules, Functions, Parameters, Blocks, and Expressions now
 use typed namespace/counter identities; allocation is monotonic across entity
 categories; and normal forks preserve inherited identities while receiving
-fresh allocation authority. Domain Types in the Safe Domain Model are the next
-planned milestone.
+fresh allocation authority. Domain Type Foundations 0.1 is the current
+specification work for the Safe Domain Model; its implementation has not yet
+begun.
 
 The normative [Function Calls and Sequencing Foundations 0.1 specification](specification/09-function-calls-and-sequencing-foundations.md)
 defines Function Calls together with the first concrete use of
@@ -106,7 +107,8 @@ Value Identity & Sequencing ADRs      Done
 Function Calls & Sequencing           Done
 Persistent Semantic Identity ADR     Done
 Persistent Semantic Identity         Done
-Domain Types                         Next
+Domain Type Foundations Spec         Current
+Domain Type Foundations Impl         Next
 ```
 
 Persistent Semantic Identity was intentionally resolved before canonical
@@ -133,12 +135,14 @@ This example is illustrative pseudocode, not normative EasyH syntax.
 
 ## C. Safe Domain Model
 
-Planned work includes:
+The current Domain Type Foundations specification work defines:
 
 - domain-defined types;
 - `TypeId`;
-- initial `Text` and `Bytes` support where required;
+- initial `Text` and `Bytes` semantics;
 - explicit semantic distinction between domain types that share an underlying representation.
+
+Implementation remains the next milestone and is not yet complete.
 
 Illustrative domain types include:
 
@@ -455,7 +459,8 @@ This release boundary does not imply that these capabilities will never be devel
 | Value Identity & Sequencing ADRs | Done |
 | Function Calls & Sequencing Foundations | Done |
 | Persistent Semantic Identity | Done |
-| Domain Types | Next |
+| Domain Type Foundations specification | Current |
+| Domain Type Foundations implementation | Next |
 | Security Foundations | Planned |
 | Effects | Planned |
 | Contracts | Planned |
