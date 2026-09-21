@@ -3,6 +3,7 @@ members = [
     "crates/easyh-render",
     "crates/mnir-cli",
     "crates/mnir-core",
+    "crates/mnir-format",
     "crates/mnir-verify",
 ]
 resolver = "3"
@@ -16,5 +17,7 @@ publish = false
 [workspace.dependencies]
 easyh-render = { path = "crates/easyh-render" }
 getrandom = "0.3"
+minicbor = { version = "=2.3.0", features = ["alloc"] }
 mnir-core = { path = "crates/mnir-core" }
+mnir-format = { path = "crates/mnir-format" }
 mnir-verify = { path = "crates/mnir-verify" }

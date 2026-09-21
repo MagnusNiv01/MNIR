@@ -6,11 +6,11 @@
 
 MNIR stands for **Magnus Nivinger Intermediate Representation**. The project is experimental and in its earliest design phase; it is not yet a usable programming language.
 
-**Implemented through Domain Type Foundations 0.1**
+**Implemented through Canonical Serialization and Deserialization 0.1**
 
 MNIR is intended to become a canonical semantic representation of programs. Future tools and human-oriented languages may project from or compile to that representation. EasyH is planned as a human-readable presentation/frontend language, not as the canonical representation.
 
-Program Model 0.1 is implemented as the foundation for Programs, Modules, revisions, snapshots, forks, presentation metadata, and controlled mutation. Type System Foundations 0.1 introduced intrinsic types, and Domain Type Foundations 0.1 extends the closed set to `Int32`, `Int64`, `Bool`, `Unit`, `Text`, and `Bytes` while adding nominal Module-owned Domain Types and generalized `ValueType`. Functions and Parameters 0.1 adds Functions and ordered Parameters. Expressions and Basic Function Bodies 0.1 adds optional bodies, intrinsic literals, Parameter references, and Return terminators. Arithmetic Expressions 0.1 adds checked `Add`, `Subtract`, `Multiply`, `Divide`, and `Remainder` semantics as non-evaluated Expression structures. Comparison Expressions 0.1 adds equality and signed-integer ordering comparisons. Conditional Control Flow 0.1 extends Function bodies to finite acyclic multi-Block control-flow graphs with entry Blocks and Branch terminators. Function Calls and Sequencing Foundations 0.1 adds direct effectful Call Expressions and explicit Block-local `EffectSequence` order. Persistent Semantic Identity 0.1 gives Modules, Domain Types, Functions, Parameters, Blocks, and Expressions typed namespace/counter identities, monotonic non-reuse within each mutable in-memory lineage, and identity-preserving normal forks with fresh allocation authorities. Domain construction and projection are explicit Expressions and do not implicitly grant operations from a Domain Type's intrinsic representation. Semantic verification rule sets V0.1 through V0.5 provide revision-bound verification evidence and machine-readable Expression, Return, Branch, Call-argument, and Domain diagnostics. No persistence format, evaluator, loops, local bindings, Call execution, security type system, EasyH support, or usable end-user tooling has been implemented. Development proceeds from the normative specification, and implementation must not silently fill in unspecified behavior.
+Program Model 0.1 is implemented as the foundation for Programs, Modules, revisions, snapshots, forks, presentation metadata, and controlled mutation. Type System Foundations 0.1 introduced intrinsic types, and Domain Type Foundations 0.1 extends the closed set to `Int32`, `Int64`, `Bool`, `Unit`, `Text`, and `Bytes` while adding nominal Module-owned Domain Types and generalized `ValueType`. Functions and Parameters 0.1 adds Functions and ordered Parameters. Expressions and Basic Function Bodies 0.1 adds optional bodies, intrinsic literals, Parameter references, and Return terminators. Arithmetic Expressions 0.1 adds checked `Add`, `Subtract`, `Multiply`, `Divide`, and `Remainder` semantics as non-evaluated Expression structures. Comparison Expressions 0.1 adds equality and signed-integer ordering comparisons. Conditional Control Flow 0.1 extends Function bodies to finite acyclic multi-Block control-flow graphs with entry Blocks and Branch terminators. Function Calls and Sequencing Foundations 0.1 adds direct effectful Call Expressions and explicit Block-local `EffectSequence` order. Persistent Semantic Identity 0.1 gives Modules, Domain Types, Functions, Parameters, Blocks, and Expressions typed namespace/counter identities, monotonic non-reuse within each mutable in-memory lineage, and identity-preserving normal forks with fresh allocation authorities. Domain construction and projection are explicit Expressions and do not implicitly grant operations from a Domain Type's intrinsic representation. Semantic verification rule sets V0.1 through V0.5 provide revision-bound verification evidence and machine-readable Expression, Return, Branch, Call-argument, and Domain diagnostics. Canonical Serialization and Deserialization 0.1 adds the deterministic `.mnir` 1.0 format, strict canonical decoding, exact checkpoint reconstruction, process-local exclusive mutable activation, and exact resource-boundary conformance evidence. No evaluator, loops, local bindings, Call execution, security type system, EasyH support, or usable end-user tooling has been implemented. Development proceeds from the normative specification, and implementation must not silently fill in unspecified behavior.
 
 ## Vision and roadmap
 
@@ -43,6 +43,7 @@ The specification is authoritative. Normative requirements use **MUST**, **MUST 
 ```text
 crates/
   mnir-core/    Canonical Program, persistent identity, ValueType, Domain Type, Expression, Call, sequencing, and acyclic CFG model
+  mnir-format/  Canonical .mnir 1.0 byte encoding, strict decoding, and persistence reconstruction orchestration
   mnir-verify/  Semantic verification V0.1–V0.5 and machine-readable diagnostics
   easyh-render/ Future deterministic EasyH renderer
   mnir-cli/     Future command-line development tools
@@ -58,7 +59,9 @@ The intended dependency direction is:
 ```text
 mnir-cli ───────→ mnir-verify ───→ mnir-core
     │                                  ↑
-    └──────────→ easyh-render ─────────┘
+    └──────────→ easyh-render ─────────┤
+                                       │
+mnir-format ───────────────────────────┘
 ```
 
 `mnir-core` never depends on EasyH or on the verification layer and should remain independent of execution backends.

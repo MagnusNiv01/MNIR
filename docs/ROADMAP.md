@@ -109,9 +109,9 @@ Persistent Semantic Identity         Done
 Domain Type Foundations Spec         Done
 Domain Type Foundations Impl         Done
 Canonical Persistence ADR            Done
-Canonical Serialization Spec         Current
-Canonical Serialization Impl         Next
-Security Foundations                 Planned
+Canonical Serialization Spec         Done
+Canonical Serialization Impl         Done
+Security Foundations                 Next
 ```
 
 Persistent Semantic Identity was intentionally resolved before canonical
@@ -148,8 +148,8 @@ Domain Type Foundations 0.1 is implemented and defines:
 It includes nominal Module-owned Domain Types, `Text` and `Bytes`, explicit
 Domain construction/projection, persistent `TypeId`, generalized `ValueType`,
 and semantic verification rule set V0.5. Canonical Serialization and
-Deserialization is the next planned normative and implementation milestone;
-Security Foundations follows it in the roadmap.
+Deserialization 0.1 is the current implementation milestone; Security
+Foundations is the next planned normative and implementation milestone.
 
 Illustrative domain types include:
 
@@ -244,12 +244,11 @@ The canonical persistence architecture is accepted in
 [ADR 0004](adr/0004-canonical-persistence-and-round-trip.md). It selects a
 committed mutable-lineage checkpoint, exact preservation of semantic,
 presentation, entity-allocation, and revision-continuation state, an isolated
-future `mnir-format` layer, and deterministic CBOR carrying an explicit MNIR
+`mnir-format` layer, and deterministic CBOR carrying an explicit MNIR
 wire schema.
 
-Canonical Serialization and Deserialization 0.1 is the current normative
-specification milestone. Its implementation is the next milestone, with these
-goals:
+Canonical Serialization and Deserialization 0.1 is implemented with these
+properties:
 
 - deterministic serialization;
 - semantic round-trip;
@@ -478,9 +477,9 @@ This release boundary does not imply that these capabilities will never be devel
 | Domain Type Foundations specification | Done |
 | Domain Type Foundations implementation | Done |
 | Canonical Persistence ADR | Done |
-| Canonical Serialization and Deserialization specification | Current |
-| Canonical Serialization and Deserialization implementation | Next |
-| Security Foundations | Planned |
+| Canonical Serialization and Deserialization specification | Done |
+| Canonical Serialization and Deserialization implementation | Done |
+| Security Foundations | Next |
 | Effects | Planned |
 | Contracts | Planned |
 | Policies / Profiles / Patterns | Planned |

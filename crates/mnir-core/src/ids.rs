@@ -19,12 +19,28 @@ pub enum IdentifierCategory {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProgramId(pub(crate) [u8; 16]);
 
+impl ProgramId {
+    /// Returns the stable 16-octet persistent representation.
+    #[must_use]
+    pub const fn persistent_bytes(self) -> [u8; 16] {
+        self.0
+    }
+}
+
 /// Opaque identity of one committed revision within a Program lineage.
 ///
 /// Consumers must not infer chronological ordering from its internal
 /// representation (`MNIR-CORE-029`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RevisionId(pub(crate) u64);
+
+impl RevisionId {
+    /// Returns the stable unsigned persistent representation.
+    #[must_use]
+    pub const fn persistent_value(self) -> u64 {
+        self.0
+    }
+}
 
 /// Collision-resistant minting domain for persistent semantic entity IDs.
 ///
@@ -33,6 +49,14 @@ pub struct RevisionId(pub(crate) u64);
 /// `MNIR-PSI-012` through `MNIR-PSI-017`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct AllocationNamespaceId(pub(crate) [u8; 16]);
+
+impl AllocationNamespaceId {
+    /// Returns the stable 16-octet persistent representation.
+    #[must_use]
+    pub const fn persistent_bytes(self) -> [u8; 16] {
+        self.0
+    }
+}
 
 /// Read-only state of a lineage's single active entity counter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

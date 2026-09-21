@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[cfg(test)]
+use std::cell::Cell;
+
 use crate::ids::{
     AllocationCounterState, AllocationNamespaceId, BlockId, ExpressionId, FunctionId,
     IdentifierCategory, ModuleId, ParameterId, ProgramId, RevisionId, TypeId,
@@ -8,6 +11,7 @@ use crate::ids::{
 use crate::presentation::PresentationMetadata;
 use crate::{IntrinsicType, ValueType};
 
+use super::authority::{AuthorityClaimError, AuthorityLease, known_namespaces, known_program_ids};
 use super::body::{Block, Expression, ExpressionKind, FunctionBody};
 use super::error::{ExpressionTypeError, MutationError, StructuralError};
 use super::validation::validate_revision_state;
@@ -270,8 +274,8 @@ impl RevisionState {
 /// `MNIR-PSI-051`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct AllocationAuthorityState {
-    namespace_id: AllocationNamespaceId,
-    counter_state: AllocationCounterState,
+    pub(super) namespace_id: AllocationNamespaceId,
+    pub(super) counter_state: AllocationCounterState,
 }
 
 impl AllocationAuthorityState {
@@ -429,19 +433,33 @@ impl ProgramSnapshot {
         &self,
         generate: &mut impl FnMut(IdentifierCategory) -> Result<[u8; 16], E>,
     ) -> Result<MnirProgram, MutationError> {
-        let program_id = allocate_program_id_with(&HashSet::from([self.program_id.0]), generate)?;
+        let mut known_programs = known_program_ids();
+        known_programs.insert(self.program_id.0);
+        let program_id = allocate_program_id_with(&known_programs, generate)?;
         let modules = self.state.copied_modules();
-        let known_namespaces = collect_present_namespaces(&modules, self.allocation_namespace_id());
-        let namespace_id = allocate_namespace_id_with(&known_namespaces, generate)?;
+        let mut unavailable_namespaces =
+            collect_present_namespaces(&modules, self.allocation_namespace_id());
+        unavailable_namespaces.extend(known_namespaces());
+        let namespace_id = allocate_namespace_id_with(&unavailable_namespaces, generate)?;
+        let revision_id = RevisionId(1);
+        let allocation_authority = AllocationAuthorityState::new(namespace_id);
+        let authority_lease = AuthorityLease::claim_fresh(
+            program_id,
+            namespace_id,
+            revision_id,
+            allocation_authority.counter_state(),
+        )
+        .map_err(map_fresh_claim_error)?;
 
         Ok(MnirProgram {
             program_id,
             head: Arc::new(RevisionState {
-                revision_id: RevisionId(1),
+                revision_id,
                 modules,
             }),
             next_revision_raw: Some(2),
-            allocation_authority: AllocationAuthorityState::new(namespace_id),
+            allocation_authority,
+            authority_lease,
         })
     }
 }
@@ -453,6 +471,7 @@ pub struct MnirProgram {
     pub(super) head: Arc<RevisionState>,
     pub(super) next_revision_raw: Option<u64>,
     pub(super) allocation_authority: AllocationAuthorityState,
+    pub(super) authority_lease: AuthorityLease,
 }
 
 impl MnirProgram {
@@ -468,16 +487,26 @@ impl MnirProgram {
     fn new_with_identity_generator<E>(
         generate: &mut impl FnMut(IdentifierCategory) -> Result<[u8; 16], E>,
     ) -> Result<Self, MutationError> {
-        let program_id = allocate_program_id_with(&HashSet::new(), generate)?;
-        let namespace_id = allocate_namespace_id_with(&HashSet::new(), generate)?;
+        let program_id = allocate_program_id_with(&known_program_ids(), generate)?;
+        let namespace_id = allocate_namespace_id_with(&known_namespaces(), generate)?;
+        let revision_id = RevisionId(1);
+        let allocation_authority = AllocationAuthorityState::new(namespace_id);
+        let authority_lease = AuthorityLease::claim_fresh(
+            program_id,
+            namespace_id,
+            revision_id,
+            allocation_authority.counter_state(),
+        )
+        .map_err(map_fresh_claim_error)?;
         Ok(Self {
             program_id,
             head: Arc::new(RevisionState {
-                revision_id: RevisionId(1),
+                revision_id,
                 modules: HashMap::new(),
             }),
             next_revision_raw: Some(2),
-            allocation_authority: AllocationAuthorityState::new(namespace_id),
+            allocation_authority,
+            authority_lease,
         })
     }
 
@@ -555,6 +584,33 @@ impl MnirProgram {
 
     pub fn validate_structure(&self) -> Result<(), StructuralError> {
         validate_revision_state(&self.head)
+    }
+
+    pub(super) fn observe_authority(&self) {
+        self.authority_lease.observe(
+            self.head.revision_id,
+            self.allocation_authority.counter_state(),
+        );
+    }
+
+    pub(super) fn reserve_entity_identity(
+        &mut self,
+        category: IdentifierCategory,
+    ) -> Result<(AllocationNamespaceId, u64), MutationError> {
+        let reserved = self.allocation_authority.reserve(category)?;
+        self.observe_authority();
+        Ok(reserved)
+    }
+}
+
+fn map_fresh_claim_error(error: AuthorityClaimError) -> MutationError {
+    match error {
+        AuthorityClaimError::IdentityCollision(category) => {
+            MutationError::IdentityCollision(category)
+        }
+        AuthorityClaimError::AlreadyActive | AuthorityClaimError::Stale => {
+            MutationError::IdentityCollision(IdentifierCategory::Program)
+        }
     }
 }
 
@@ -902,9 +958,21 @@ fn allocate_namespace_id_with<E>(
 }
 
 fn generate_random_identity(_category: IdentifierCategory) -> Result<[u8; 16], getrandom::Error> {
+    #[cfg(test)]
+    IDENTITY_GENERATION_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+thread_local! {
+    static IDENTITY_GENERATION_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn identity_generation_calls() -> usize {
+    IDENTITY_GENERATION_CALLS.with(Cell::get)
 }
 
 fn allocate_identity_with<E>(

@@ -1010,6 +1010,7 @@ impl MutationTransaction<'_> {
             revision_id,
             modules,
         });
+        self.lineage.observe_authority();
         self.state = TransactionState::Committed;
 
         Ok(self.lineage.snapshot())
@@ -1138,48 +1139,42 @@ impl MutationTransaction<'_> {
     fn allocate_module_id(&mut self) -> Result<ModuleId, MutationError> {
         let (namespace_id, counter) = self
             .lineage
-            .allocation_authority
-            .reserve(IdentifierCategory::Module)?;
+            .reserve_entity_identity(IdentifierCategory::Module)?;
         Ok(ModuleId::new(namespace_id, counter))
     }
 
     fn allocate_function_id(&mut self) -> Result<FunctionId, MutationError> {
         let (namespace_id, counter) = self
             .lineage
-            .allocation_authority
-            .reserve(IdentifierCategory::Function)?;
+            .reserve_entity_identity(IdentifierCategory::Function)?;
         Ok(FunctionId::new(namespace_id, counter))
     }
 
     fn allocate_type_id(&mut self) -> Result<TypeId, MutationError> {
         let (namespace_id, counter) = self
             .lineage
-            .allocation_authority
-            .reserve(IdentifierCategory::Type)?;
+            .reserve_entity_identity(IdentifierCategory::Type)?;
         Ok(TypeId::new(namespace_id, counter))
     }
 
     fn allocate_parameter_id(&mut self) -> Result<ParameterId, MutationError> {
         let (namespace_id, counter) = self
             .lineage
-            .allocation_authority
-            .reserve(IdentifierCategory::Parameter)?;
+            .reserve_entity_identity(IdentifierCategory::Parameter)?;
         Ok(ParameterId::new(namespace_id, counter))
     }
 
     fn allocate_block_id(&mut self) -> Result<BlockId, MutationError> {
         let (namespace_id, counter) = self
             .lineage
-            .allocation_authority
-            .reserve(IdentifierCategory::Block)?;
+            .reserve_entity_identity(IdentifierCategory::Block)?;
         Ok(BlockId::new(namespace_id, counter))
     }
 
     fn allocate_expression_id(&mut self) -> Result<ExpressionId, MutationError> {
         let (namespace_id, counter) = self
             .lineage
-            .allocation_authority
-            .reserve(IdentifierCategory::Expression)?;
+            .reserve_entity_identity(IdentifierCategory::Expression)?;
         Ok(ExpressionId::new(namespace_id, counter))
     }
 }

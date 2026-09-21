@@ -1277,18 +1277,75 @@ operand mismatch, Return mismatch, invalid DomainConstruct representation, and
 invalid Call argument types. Decode MUST succeed and V0_5 MUST subsequently
 produce the expected diagnostics.
 
+### Exact resource-limit conformance methodology
+
+For AR-SER-031 and AR-SER-032, exact maximum acceptance MAY be demonstrated
+using a bounded virtual canonical fixture rather than materializing a
+pathological-size contiguous byte buffer. Such a fixture represents one
+logically exact canonical `.mnir` byte sequence while synthesizing portions of
+that sequence on demand.
+
+A qualifying virtual fixture MUST have an exact deterministic logical byte
+length and an exact deterministic byte value at every logical position. It
+MUST exercise the same production canonical-profile parser, schema path,
+resource-limit decisions, checked arithmetic, and relevant structural
+validation used for ordinary byte input. It MUST use the exact production
+limit constants, preserve every applicable canonical-format requirement, and
+validate all logical payload content required by the tested path. It MUST NOT
+substitute a separately implemented set of format rules, skip required
+content, or make a logically non-canonical artifact count as valid. Virtual
+fixture support is conformance-only infrastructure and MUST remain unavailable
+as production API unless independently specified later.
+
+Where the public decoder requires a contiguous byte slice, compositional
+evidence is permitted only when all of the following are demonstrated:
+
+1. The exact production boundary guard used by public decode accepts `MAX` and
+   returns `ResourceLimitExceeded` for `MAX + 1`.
+2. An ordinary byte-backed public decode proves that the same guard is on the
+   public decode path.
+3. A valid virtual canonical fixture at the exact maximum exercises the shared
+   downstream production parser and validation decisions sufficiently to prove
+   that no narrower hidden limit prevents acceptance.
+
+Testing only a constant-comparison helper, reducing or replacing production
+limits under test configuration, mocking successful decode without parsing the
+logical input, testing only `MAX - 1`, proving only `MAX + 1` rejection, or
+using a separate test parser is insufficient. Conformance tests SHOULD avoid
+allocating pathological buffers when equivalent bounded evidence is available.
+
 ### AR-SER-031 — Resource file-size limit
 
-Accept boundary-valid input at the supported maximum through a bounded/streamed
-fixture strategy and reject declared or actual data above `2^30` without
-proportional allocation or overflow.
+Demonstrate a valid canonical artifact whose exact logical encoded size,
+including the envelope, is `2^30` bytes and prove acceptance using the exact
+boundary and compositional methodology above. Demonstrate that an otherwise
+equivalent logical artifact of `2^30 + 1` bytes is rejected as
+`ResourceLimitExceeded` without proportional allocation or overflow. Normal CI
+MUST NOT be required to retain a contiguous 1-GiB buffer solely for this
+acceptance requirement.
 
 ### AR-SER-032 — Resource field limits
 
-Test Text/Bytes and collection counts at representative canonical boundaries,
-reject values above `2^28` content bytes or `2^24` elements, reject depth 17,
-and exercise overflow-prone declared lengths without panic or uncontrolled
-allocation.
+Using the exact boundary and compositional methodology above, demonstrate
+accepted canonical Text and Bytes items containing exactly `2^28` content
+bytes and reject `2^28 + 1`. The maximum Text content MUST be valid canonical
+UTF-8 for its represented Unicode scalar sequence; repeated ASCII scalars are
+permitted. The maximum Bytes fixture MUST define an exact octet sequence. Both
+fixtures MUST exercise the production length and content-validation path.
+
+Demonstrate an accepted canonical variable-length collection containing
+exactly `2^24` valid elements and reject a declared or logical collection of
+`2^24 + 1` elements. A repeated minimal canonical element MAY be used where it
+is semantically valid, but the production collection-length and
+iteration/schema path MUST be exercised. When semantic reconstruction
+necessarily retains every decoded element, the exact maximum evidence MAY stop
+at the wire/parser boundary where this specification's resource decision is
+made, provided the remaining schema and integration paths are independently
+covered as required above.
+
+Use ordinary concrete byte fixtures to prove nesting depth 16 is accepted and
+depth 17 is rejected. Also exercise overflow-prone declared lengths without
+panic or uncontrolled allocation.
 
 ### AR-SER-033 — Flat dependency decoding
 
