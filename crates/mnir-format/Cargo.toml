@@ -1,0 +1,13 @@
+[package]
+name = "mnir-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+minicbor.workspace = true
+mnir-core.workspace = true
+
+[dev-dependencies]
+mnir-verify.workspace = true

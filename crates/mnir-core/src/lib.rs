@@ -46,7 +46,11 @@ pub use intrinsic::IntrinsicType;
 pub use presentation::PresentationMetadata;
 pub use program::{
     Block, DomainType, Expression, ExpressionKind, ExpressionTypeError, Function, FunctionBody,
-    MnirProgram, Module, MutationError, MutationTransaction, Parameter, ProgramSnapshot,
-    StructuralError, Terminator, TransactionState,
+    MnirProgram, Module, MutationError, MutationTransaction, Parameter, PersistenceBlock,
+    PersistenceBody, PersistenceDomainType, PersistenceEntityId, PersistenceExpression,
+    PersistenceExpressionKind, PersistenceFunction, PersistenceModule, PersistenceParameter,
+    PersistencePresentation, PersistenceProgram, PersistenceRestoreError, PersistenceSnapshot,
+    PersistenceTerminator, PersistenceValueType, ProgramSnapshot, RevisionCounterState,
+    StructuralError, Terminator, TransactionState, ValidatedPersistenceState,
 };
 pub use value_type::ValueType;

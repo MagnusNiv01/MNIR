@@ -108,6 +108,9 @@ Persistent Semantic Identity ADR     Done
 Persistent Semantic Identity         Done
 Domain Type Foundations Spec         Done
 Domain Type Foundations Impl         Done
+Canonical Persistence ADR            Done
+Canonical Serialization Spec         Done
+Canonical Serialization Impl         Done
 Security Foundations                 Next
 ```
 
@@ -144,8 +147,9 @@ Domain Type Foundations 0.1 is implemented and defines:
 
 It includes nominal Module-owned Domain Types, `Text` and `Bytes`, explicit
 Domain construction/projection, persistent `TypeId`, generalized `ValueType`,
-and semantic verification rule set V0.5. Security Foundations is the next
-planned milestone.
+and semantic verification rule set V0.5. Canonical Serialization and
+Deserialization 0.1 is the current implementation milestone; Security
+Foundations is the next planned normative and implementation milestone.
 
 Illustrative domain types include:
 
@@ -236,7 +240,15 @@ Their normative behavior is intentionally not defined here. One or two working p
 
 ## G. Persistence and Git
 
-Canonical MNIR serialization is planned with these goals:
+The canonical persistence architecture is accepted in
+[ADR 0004](adr/0004-canonical-persistence-and-round-trip.md). It selects a
+committed mutable-lineage checkpoint, exact preservation of semantic,
+presentation, entity-allocation, and revision-continuation state, an isolated
+`mnir-format` layer, and deterministic CBOR carrying an explicit MNIR
+wire schema.
+
+Canonical Serialization and Deserialization 0.1 is implemented with these
+properties:
 
 - deterministic serialization;
 - semantic round-trip;
@@ -464,11 +476,13 @@ This release boundary does not imply that these capabilities will never be devel
 | Persistent Semantic Identity | Done |
 | Domain Type Foundations specification | Done |
 | Domain Type Foundations implementation | Done |
+| Canonical Persistence ADR | Done |
+| Canonical Serialization and Deserialization specification | Done |
+| Canonical Serialization and Deserialization implementation | Done |
 | Security Foundations | Next |
 | Effects | Planned |
 | Contracts | Planned |
 | Policies / Profiles / Patterns | Planned |
-| Canonical Serialization | Planned |
 | Package and Dependency System | Planned |
 | Semantic Mutation API | Planned |
 | Semantic Diff | Planned |
